@@ -91,7 +91,7 @@ export default function GarbageClassifier() {
       });
 
       // Groq API key
-      const groqApiKey = "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";
+      const groqApiKey = "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";
       
       // First call to Groq API - Classify if garbage or not
       console.log("Making first API call to classify image...");

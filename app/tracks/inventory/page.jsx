@@ -17,6 +17,10 @@ import {
 import Papa from 'papaparse';
 import _ from 'lodash';
 import GeneralImageRecognition from '@/app/components/GeneralImageRecognition';
+import { collection, addDoc, getDocs, query, orderBy, limit, doc, updateDoc, deleteDoc, where, runTransaction, getDoc } from 'firebase/firestore';
+import { db } from '@/firebase';
+import { formatDateToDDMMYYYY, convertMMDDToDD } from '../../../utils/dateUtils';
+import Groq from 'groq-sdk';
 
 // Calculate age of vine products in months
 const getVineAgeInMonths = (manufacturingDateStr) => {
@@ -116,18 +120,58 @@ const formatPrice = (price) => {
   }).format(price);
 };
 
-// Function to generate a unique ID based on material type
-const generateUniqueId = (materialType) => {
+// Improved function to generate a unique ID with incremental counters using Firebase
+const generateUniqueId = async (materialType) => {
   // Get prefix from material type
   const prefix = materialType.charAt(0).toUpperCase();
 
-  // Get timestamp for uniqueness
-  const timestamp = new Date().getTime();
+  try {
+    // Use a transaction to ensure atomic counter updates
+    return await runTransaction(db, async (transaction) => {
+      // Reference to the counters document
+      const counterRef = doc(db, 'counters', 'inventory');
+      const counterDoc = await transaction.get(counterRef);
 
-  // Generate a 4-digit number from the timestamp
-  const uniqueNumber = (timestamp % 10000).toString().padStart(4, '0');
+      let counters = {};
 
-  return `${prefix}${uniqueNumber}`;
+      // Initialize or get existing counters
+      if (!counterDoc.exists()) {
+        // Initialize counters if document doesn't exist
+        counters = {
+          V: 0, // Vine
+          C: 0, // Chapati
+          P: 0, // Pizza
+          I: 0  // Generic/Other
+        };
+
+        // Create the counters document
+        transaction.set(counterRef, counters);
+      } else {
+        counters = counterDoc.data();
+
+        // Ensure all counter types exist
+        if (!counters[prefix]) {
+          counters[prefix] = 1;
+        } else {
+          // Increment the specific counter
+          counters[prefix]++;
+        }
+
+        // Update counters in the document
+        transaction.update(counterRef, counters);
+      }
+
+      // Format the ID with padded zeros
+      const paddedNumber = String(counters[prefix]).padStart(4, '0');
+      return `${prefix}${paddedNumber}`;
+    });
+  } catch (error) {
+    console.error('Error generating unique ID:', error);
+
+    // Fallback to timestamp-based ID if transaction fails
+    const timestamp = new Date().getTime();
+    return `${prefix}${timestamp.toString().slice(-6)}`;
+  }
 };
 
 // Mock data for raw material options
@@ -145,9 +189,6 @@ const ItemRecognition = ({ onItemsDetected, materialType }) => {
   const [showModal, setShowModal] = useState(false);
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
-
-  // Groq API Key - hardcoded for demonstration purposes
-  const GROQ_API_KEY = "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";
 
   // Handle file upload
   const handleFileChange = (e) => {
@@ -309,68 +350,102 @@ const ItemRecognition = ({ onItemsDetected, materialType }) => {
   };
 
   // Analyze image using Groq API
+  // Analyze image using actual Groq API
   const analyzeImage = async () => {
     if (!imagePreview) return;
 
     setIsAnalyzing(true);
     setError('');
+    // Clear previous detection results
+    setDetectedItems([]);
 
     try {
-      // Direct frontend implementation of Groq API call
-      // In production, this should be done through a backend endpoint
-      const prompt = "Analyze this image and identify all inventory items visible. " +
-        "For each item, provide the name and quantity. " +
-        "Focus on identifying vine products, chapati ingredients, and pizza ingredients. " +
-        "Respond in JSON format with an array of items, where each item has 'name', 'quantity', and 'type' fields. " +
-        "For type, use 'vine', 'chapati', or 'pizza'.";
+      // Create a Groq client instance with browser support enabled
+      const groq = new Groq({
+        apiKey: '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', // Replace with your actual API key
+        dangerouslyAllowBrowser: true // Required for browser environments
+      });
 
-      // For direct frontend implementation, we'll mock the API response
-      // In production, you would use fetch() to call a backend API that interfaces with Groq
-      // or set up proper CORS and authorization for direct API calls
+      // Construct the messages for the API call
+      const messages = [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": `Examine the image and identify all visible products made of ${materialType}. Provide a structured JSON response containing an array of objects, where each object includes: name: The product's name , quantity: The number of items detected (##IF UNSURE DONT MENTION),type: '${materialType}' Ensure accuracy in detection and categorization`
+            },
+            {
+              "type": "image_url",
+              "image_url": {
+                "url": imagePreview // Base64 image data
+              }
+            }
+          ]
+        }
+      ];
 
-      // Mock API call delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Make the API call
+      const chatCompletion = await groq.chat.completions.create({
+        messages: messages,
+        model: "llama-3.2-90b-vision-preview", // Using the vision-enabled model
+        temperature: 0.5,
+        max_completion_tokens: 1024,
+        top_p: 1,
+        stream: false
+      });
 
-      let responseData;
-      // Check if we're identifying by material type
-      if (materialType === 'vine') {
-        responseData = [
-          { name: "Red Grape", quantity: 2, type: "vine" },
-          { name: "Wine Vinegar", quantity: 1, type: "vine" },
-          { name: "Balsamic Vinegar", quantity: 1, type: "vine" }
-        ];
-      } else if (materialType === 'chapati') {
-        responseData = [
-          { name: "Whole Wheat Flour", quantity: 1, type: "chapati" },
-          { name: "All-Purpose Flour", quantity: 2, type: "chapati" }
-        ];
-      } else if (materialType === 'pizza') {
-        responseData = [
-          { name: "Mozzarella Cheese", quantity: 2, type: "pizza" },
-          { name: "Tomato Sauce", quantity: 1, type: "pizza" },
-          { name: "Pizza Dough", quantity: 3, type: "pizza" }
-        ];
-      } else {
-        // Mixed items
-        responseData = [
-          { name: "Red Grape", quantity: 2, type: "vine" },
-          { name: "Whole Wheat Flour", quantity: 1, type: "chapati" },
-          { name: "Mozzarella Cheese", quantity: 2, type: "pizza" },
-          { name: "Wine Vinegar", quantity: 1, type: "vine" }
-        ];
+      // Extract the response text
+      const responseText = chatCompletion.choices[0].message.content;
+      console.log("Groq API Response:", responseText);
+
+      // Try to parse the JSON from the response
+      let detectedItems = [];
+      try {
+        // Look for JSON-like structure in the response
+        const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          detectedItems = JSON.parse(jsonMatch[0]);
+        } else {
+          // If no JSON array found, try to extract information using regex
+          const itemRegex = /(\w+\s*\w*)\s*:?\s*(\d+)/g;
+          let match;
+          while ((match = itemRegex.exec(responseText)) !== null) {
+            detectedItems.push({
+              name: match[1].trim(),
+              quantity: parseInt(match[2]),
+              type: materialType
+            });
+          }
+        }
+      } catch (parseError) {
+        console.error('Error parsing Groq response:', parseError);
+        // If parsing fails, create a fallback item
+        detectedItems = [{
+          name: `${materialType} item (auto-detected)`,
+          quantity: 1,
+          type: materialType
+        }];
       }
 
-      // Filter by material type if needed
-      const filteredItems = materialType !== 'all'
-        ? responseData.filter(item => item.type === materialType)
-        : responseData;
+      // If we still have no items, provide feedback
+      if (detectedItems.length === 0) {
+        setError('Could not detect specific items. Try a clearer image or different angle.');
+        // Add a generic fallback item
+        detectedItems = [{
+          name: `${materialType} item (generic)`,
+          quantity: 1,
+          type: materialType
+        }];
+      }
 
-      setDetectedItems(filteredItems);
+      // Set the detected items
+      setDetectedItems(detectedItems);
       setIsAnalyzing(false);
 
     } catch (error) {
-      console.error('Error analyzing image:', error);
-      setError('Failed to analyze image. Please try again.');
+      console.error('Error analyzing image with Groq API:', error);
+      setError(`Failed to analyze image: ${error.message || 'Unknown error'}`);
       setIsAnalyzing(false);
     }
   };
@@ -655,21 +730,137 @@ const Dashboard = () => {
     })
   );
 
-  // Load inventory data
+  // Load inventory data from Firebase
   useEffect(() => {
     const loadData = async () => {
       setIsLoading(true);
-      const data = await fetchInventoryData();
-      setInventoryData(data);
-      calculateStats(data);
-      setIsLoading(false);
+      try {
+        const q = query(collection(db, 'inventory'), orderBy('createdAt', 'desc'));
+        const querySnapshot = await getDocs(q);
+
+        // Convert Firestore data to our app's data format
+        const data = querySnapshot.docs.map(doc => {
+          const item = doc.data();
+
+          // Process the raw item data to ensure it has all required properties
+          const processedItem = {
+            id: doc.id,
+            uid: item.uid || 'unknown',
+            name: item.name || 'Unknown Item',
+            materialType: item.materialType || 'other',
+            material: item.material || item.name || 'Unknown Material',
+            quantity: item.quantity || 1,
+            price: item.price || 0,
+            createdAt: item.createdAt ? item.createdAt instanceof Date
+              ? item.createdAt.toISOString()
+              : item.createdAt
+              : new Date().toISOString()
+          };
+
+          // Handle Vine products
+          if (item.materialType === 'vine' && item.manufacturingDate) {
+            processedItem.manufacturingDate = item.manufacturingDate;
+
+            // Calculate age related properties if needed
+            if (!item.ageInMonths || !item.ageClassification) {
+              const ageInMonths = getVineAgeInMonths(item.manufacturingDate);
+              const ageClassification = getVineAgeClassification(ageInMonths);
+
+              processedItem.ageInMonths = ageInMonths;
+              processedItem.ageClassification = ageClassification;
+              processedItem.expiryStatus = { bg: ageClassification.bg, text: ageClassification.text };
+              processedItem.expiryText = `${ageClassification.label} (${ageInMonths || 0} months)`;
+            } else {
+              processedItem.ageInMonths = item.ageInMonths;
+              processedItem.ageClassification = item.ageClassification;
+              processedItem.expiryStatus = item.expiryStatus || { bg: 'bg-gray-100', text: 'text-gray-600' };
+              processedItem.expiryText = item.expiryText || 'Unknown';
+            }
+
+            processedItem.daysUntilExpiry = null;
+          }
+          // Handle other products (with expiry dates)
+          else if (item.expiryDate) {
+            processedItem.expiryDate = item.expiryDate;
+
+            // Calculate expiry related properties if needed
+            if (!item.daysUntilExpiry || !item.expiryStatus) {
+              const daysUntilExpiry = getDaysUntilExpiry(item.expiryDate);
+              const expiryStatus = getExpiryStatusColor(daysUntilExpiry);
+              const expiryText = getExpiryStatusText(daysUntilExpiry);
+
+              processedItem.daysUntilExpiry = daysUntilExpiry;
+              processedItem.expiryStatus = expiryStatus;
+              processedItem.expiryText = expiryText;
+            } else {
+              processedItem.daysUntilExpiry = item.daysUntilExpiry;
+              processedItem.expiryStatus = item.expiryStatus || { bg: 'bg-gray-100', text: 'text-gray-600' };
+              processedItem.expiryText = item.expiryText || 'Unknown';
+            }
+
+            processedItem.ageInMonths = null;
+            processedItem.ageClassification = null;
+          }
+          // Set default values if data is incomplete
+          else {
+            if (processedItem.materialType === 'vine') {
+              processedItem.manufacturingDate = formatDateToDDMMYYYY(new Date());
+              processedItem.ageInMonths = 0;
+              processedItem.ageClassification = getVineAgeClassification(0);
+              processedItem.expiryStatus = { bg: 'bg-green-50', text: 'text-green-600' };
+              processedItem.expiryText = 'New (0 months)';
+              processedItem.daysUntilExpiry = null;
+            } else {
+              // Set default expiry date to 1 year from now
+              const oneYearFromNow = new Date();
+              oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+              processedItem.expiryDate = formatDateToDDMMYYYY(oneYearFromNow);
+              processedItem.daysUntilExpiry = 365;
+              processedItem.expiryStatus = { bg: 'bg-green-50', text: 'text-green-600' };
+              processedItem.expiryText = `Expires in 365 days`;
+              processedItem.ageInMonths = null;
+              processedItem.ageClassification = null;
+            }
+          }
+
+          return processedItem;
+        });
+
+        setInventoryData(data);
+        calculateStats(data);
+      } catch (error) {
+        console.error("Error loading inventory data from Firebase:", error);
+        // Fallback to mock data if loading from Firebase fails
+        const mockData = await fetchMockInventoryData();
+        setInventoryData(mockData);
+        calculateStats(mockData);
+      } finally {
+        setIsLoading(false);
+      }
     };
 
     loadData();
   }, []);
 
+  // Auto-generate UID when component mounts
+  useEffect(() => {
+    const setInitialUid = async () => {
+      try {
+        const uid = await generateUniqueId(formData.materialType);
+        setFormData(prev => ({
+          ...prev,
+          uid: uid
+        }));
+      } catch (error) {
+        console.error("Error generating initial UID:", error);
+      }
+    };
+
+    setInitialUid();
+  }, []);
+
   // Process items detected from image recognition
-  const processDetectedItems = (items) => {
+  const processDetectedItems = async (items) => {
     if (!items || items.length === 0) return;
 
     // Create a queue of items to add
@@ -678,97 +869,147 @@ const Dashboard = () => {
     // Display success notification
     setFormSuccess(`Adding ${items.length} items to inventory...`);
 
-    // Process first item immediately
-    if (itemsToAdd.length > 0) {
-      const firstItem = itemsToAdd.shift();
-      addItemToInventory(firstItem);
-    }
+    try {
+      // Process items sequentially to avoid Firebase write conflicts
+      for (let i = 0; i < itemsToAdd.length; i++) {
+        await addItemToInventory(itemsToAdd[i]);
+        setFormSuccess(`Added ${i + 1} of ${items.length} items...`);
+      }
 
-    // If there are more items, set up a queue to process them
-    if (itemsToAdd.length > 0) {
-      const processQueue = setInterval(() => {
-        if (itemsToAdd.length === 0) {
-          clearInterval(processQueue);
-          setFormSuccess(`Successfully added ${items.length} items to inventory`);
-          setTimeout(() => setFormSuccess(''), 3000);
-          return;
+      // Refresh inventory data
+      refreshInventoryData();
+
+      setFormSuccess(`Successfully added ${items.length} items to inventory`);
+      setTimeout(() => setFormSuccess(''), 3000);
+    } catch (error) {
+      console.error("Error adding detected items:", error);
+      setFormError(`Error adding items: ${error.message}`);
+      setTimeout(() => setFormError(''), 3000);
+    }
+  };
+
+  // Refresh inventory data from Firebase
+  const refreshInventoryData = async () => {
+    try {
+      const q = query(collection(db, 'inventory'), orderBy('createdAt', 'desc'));
+      const querySnapshot = await getDocs(q);
+
+      const data = querySnapshot.docs.map(doc => {
+        return {
+          id: doc.id,
+          ...doc.data(),
+        };
+      });
+
+      // Process the data as needed
+      const processedData = data.map(item => {
+        // Process vine products
+        if (item.materialType === 'vine' && item.manufacturingDate) {
+          const ageInMonths = getVineAgeInMonths(item.manufacturingDate);
+          const ageClassification = getVineAgeClassification(ageInMonths);
+
+          return {
+            ...item,
+            ageInMonths,
+            ageClassification,
+            expiryStatus: { bg: ageClassification.bg, text: ageClassification.text },
+            expiryText: `${ageClassification.label} (${ageInMonths || 0} months)`,
+            daysUntilExpiry: null
+          };
+        }
+        // Process other products
+        else if (item.expiryDate) {
+          const daysUntilExpiry = getDaysUntilExpiry(item.expiryDate);
+          const expiryStatus = getExpiryStatusColor(daysUntilExpiry);
+          const expiryText = getExpiryStatusText(daysUntilExpiry);
+
+          return {
+            ...item,
+            daysUntilExpiry,
+            expiryStatus,
+            expiryText,
+            ageInMonths: null,
+            ageClassification: null
+          };
         }
 
-        const nextItem = itemsToAdd.shift();
-        addItemToInventory(nextItem);
-      }, 500); // Process each item with a slight delay
-    } else {
-      setTimeout(() => {
-        setFormSuccess(`Successfully added ${items.length} item to inventory`);
-        setTimeout(() => setFormSuccess(''), 3000);
-      }, 500);
+        return item;
+      });
+
+      setInventoryData(processedData);
+      calculateStats(processedData);
+    } catch (error) {
+      console.error("Error refreshing inventory data:", error);
     }
   };
 
   // Add detected item to inventory
-  const addItemToInventory = (item) => {
-    // Generate a unique ID for the item
-    const uid = generateUniqueId(item.type || formData.materialType);
+  const addItemToInventory = async (item) => {
+    try {
+      // Generate a unique ID for the item
+      const uid = await generateUniqueId(item.type || formData.materialType);
 
-    // Prepare current date in DD/MM/YYYY format for default date
-    const today = new Date();
-    const day = String(today.getDate()).padStart(2, '0');
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const year = today.getFullYear();
-    const dateStr = `${day}/${month}/${year}`;
+      // Prepare current date in DD/MM/YYYY format for default date
+      const today = new Date();
+      const day = String(today.getDate()).padStart(2, '0');
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const year = today.getFullYear();
+      const dateStr = `${day}/${month}/${year}`;
 
-    // For expiry date, set it 3 months in the future
-    const expiryDate = new Date();
-    expiryDate.setMonth(expiryDate.getMonth() + 3);
-    const expiryDay = String(expiryDate.getDate()).padStart(2, '0');
-    const expiryMonth = String(expiryDate.getMonth() + 1).padStart(2, '0');
-    const expiryYear = expiryDate.getFullYear();
-    const expiryDateStr = `${expiryDay}/${expiryMonth}/${expiryYear}`;
+      // For expiry date, set it 3 months in the future
+      const expiryDate = new Date();
+      expiryDate.setMonth(expiryDate.getMonth() + 3);
+      const expiryDay = String(expiryDate.getDate()).padStart(2, '0');
+      const expiryMonth = String(expiryDate.getMonth() + 1).padStart(2, '0');
+      const expiryYear = expiryDate.getFullYear();
+      const expiryDateStr = `${expiryDay}/${expiryMonth}/${expiryYear}`;
 
-    // Prepare new item data
-    const newItem = {
-      id: `id-${inventoryData.length + 1}`,
-      uid: uid,
-      name: item.name,
-      materialType: item.type || formData.materialType,
-      material: item.name,
-      quantity: item.quantity || 1,
-      price: formData.price || '100.00', // Default price or use existing
-      createdAt: new Date().toISOString()
-    };
+      // Prepare new item data
+      const newItem = {
+        uid: uid,
+        name: item.name,
+        materialType: item.type || formData.materialType,
+        material: item.name,
+        quantity: item.quantity || 1,
+        price: formData.price || 100.00, // Default price or use existing
+        createdAt: new Date()
+      };
 
-    // Add appropriate date field based on material type
-    if (newItem.materialType === 'vine') {
-      newItem.manufacturingDate = dateStr;
-      // Calculate age related properties
-      const ageInMonths = getVineAgeInMonths(dateStr);
-      const ageClassification = getVineAgeClassification(ageInMonths);
+      // Add appropriate date field based on material type
+      if (newItem.materialType === 'vine') {
+        newItem.manufacturingDate = dateStr;
+        // Calculate age related properties
+        const ageInMonths = getVineAgeInMonths(dateStr);
+        const ageClassification = getVineAgeClassification(ageInMonths);
 
-      newItem.ageInMonths = ageInMonths;
-      newItem.ageClassification = ageClassification;
-      newItem.daysUntilExpiry = null;
-      newItem.expiryStatus = { bg: ageClassification.bg, text: ageClassification.text };
-      newItem.expiryText = `${ageClassification.label} (${ageInMonths || 0} months)`;
-    } else {
-      newItem.expiryDate = expiryDateStr;
-      // Calculate expiry related properties
-      const daysUntilExpiry = getDaysUntilExpiry(expiryDateStr);
-      const expiryStatus = getExpiryStatusColor(daysUntilExpiry);
-      const expiryText = getExpiryStatusText(daysUntilExpiry);
+        newItem.ageInMonths = ageInMonths;
+        newItem.ageClassification = ageClassification;
+        newItem.daysUntilExpiry = null;
+        newItem.expiryStatus = { bg: ageClassification.bg, text: ageClassification.text };
+        newItem.expiryText = `${ageClassification.label} (${ageInMonths || 0} months)`;
+      } else {
+        newItem.expiryDate = expiryDateStr;
+        // Calculate expiry related properties
+        const daysUntilExpiry = getDaysUntilExpiry(expiryDateStr);
+        const expiryStatus = getExpiryStatusColor(daysUntilExpiry);
+        const expiryText = getExpiryStatusText(daysUntilExpiry);
 
-      newItem.daysUntilExpiry = daysUntilExpiry;
-      newItem.expiryStatus = expiryStatus;
-      newItem.expiryText = expiryText;
-      newItem.ageInMonths = null;
-      newItem.ageClassification = null;
+        newItem.daysUntilExpiry = daysUntilExpiry;
+        newItem.expiryStatus = expiryStatus;
+        newItem.expiryText = expiryText;
+        newItem.ageInMonths = null;
+        newItem.ageClassification = null;
+      }
+
+      // Add to Firestore
+      const docRef = await addDoc(collection(db, 'inventory'), newItem);
+      console.log("Document written with ID: ", docRef.id);
+
+      return { id: docRef.id, ...newItem };
+    } catch (error) {
+      console.error("Error adding item to Firebase:", error);
+      throw error;
     }
-
-    // Add to inventory data
-    setInventoryData(prevData => {
-      const updatedData = [newItem, ...prevData];
-      calculateStats(updatedData);
-      return updatedData;
-    });
   };
 
   // Handle camera capture for date extraction
@@ -919,14 +1160,6 @@ const Dashboard = () => {
     input.click();
   };
 
-  // Auto-generate UID when component mounts
-  useEffect(() => {
-    setFormData(prev => ({
-      ...prev,
-      uid: generateUniqueId(prev.materialType)
-    }));
-  }, []);
-
   // Handle DND end
   const handleDragEnd = (event) => {
     const { active, over } = event;
@@ -941,12 +1174,11 @@ const Dashboard = () => {
     }
   };
 
-  // Mock fetch inventory data
-  const fetchInventoryData = async () => {
+  // Fetch mock inventory data (fallback if Firebase fails)
+  const fetchMockInventoryData = async () => {
     try {
       const now = new Date();
 
-      // Generate sample data based on the schema from the reference code
       const materialTypes = ['vine', 'chapati', 'pizza'];
 
       const getRandomDate = (start, end) => {
@@ -968,14 +1200,14 @@ const Dashboard = () => {
       let demoProducts = [];
       let idCounter = { vine: 0, chapati: 0, pizza: 0 };
 
-      // Generate 100 sample products
-      for (let i = 0; i < 100; i++) {
+      // Generate 30 sample products (smaller number for fallback)
+      for (let i = 0; i < 30; i++) {
         const materialType = materialTypes[Math.floor(Math.random() * materialTypes.length)];
         const material = materialOptions[materialType][Math.floor(Math.random() * materialOptions[materialType].length)];
         const idPrefix = materialType === 'vine' ? 'V' : materialType === 'chapati' ? 'C' : 'P';
 
         let product = {
-          id: `id-${i}`,
+          id: `mock-${i}`,
           uid: `${idPrefix}${String(++idCounter[materialType]).padStart(4, '0')}`,
           materialType,
           material,
@@ -1042,7 +1274,7 @@ const Dashboard = () => {
 
       return demoProducts;
     } catch (error) {
-      console.error("Error loading inventory data:", error);
+      console.error("Error creating mock inventory data:", error);
       return [];
     }
   };
@@ -1074,7 +1306,7 @@ const Dashboard = () => {
         if (item.manufacturingDate) {
           const ageInMonths = getVineAgeInMonths(item.manufacturingDate);
           const classification = getVineAgeClassification(ageInMonths);
-          if (classification && classification.value !== 'unknown') {
+          if (classification && classification.value && classification.value !== 'unknown') {
             vineAgeDistribution[classification.value]++;
           }
         }
@@ -1128,8 +1360,8 @@ const Dashboard = () => {
     if (tableFilters.search) {
       const searchTerm = tableFilters.search.toLowerCase();
       filteredItems = filteredItems.filter(item =>
-        item.name.toLowerCase().includes(searchTerm) ||
-        item.uid.toLowerCase().includes(searchTerm)
+        item.name?.toLowerCase().includes(searchTerm) ||
+        item.uid?.toLowerCase().includes(searchTerm)
       );
     }
 
@@ -1166,10 +1398,10 @@ const Dashboard = () => {
         });
         break;
       case 'name-asc':
-        sortedItems.sort((a, b) => a.name.localeCompare(b.name));
+        sortedItems.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         break;
       case 'name-desc':
-        sortedItems.sort((a, b) => b.name.localeCompare(a.name));
+        sortedItems.sort((a, b) => (b.name || '').localeCompare(a.name || ''));
         break;
       case 'expired-first':
         sortedItems.sort((a, b) => {
@@ -1262,19 +1494,24 @@ const Dashboard = () => {
   };
 
   // Handle material type selection change
-  const handleMaterialTypeChange = (e) => {
-    const materialType = e.target.value;
+  const handleMaterialTypeChange = async (e) => {
+    try {
+      const materialType = e.target.value;
 
-    // Auto-generate a UID based on the material type
-    const uid = generateUniqueId(materialType);
+      // Auto-generate a UID based on the material type
+      const uid = await generateUniqueId(materialType);
 
-    setFormData({
-      ...formData,
-      materialType,
-      material: '', // Reset material when type changes
-      uid, // Set the auto-generated UID
-      date: '' // Reset date when type changes
-    });
+      setFormData({
+        ...formData,
+        materialType,
+        material: '', // Reset material when type changes
+        uid, // Set the auto-generated UID
+        date: '' // Reset date when type changes
+      });
+    } catch (error) {
+      console.error("Error generating UID for material type change:", error);
+      // Handle error (perhaps showing error message to user)
+    }
   };
 
   // Date extractor handlers
@@ -1293,33 +1530,203 @@ const Dashboard = () => {
   };
 
   // Extract date from image
-  const extractDate = () => {
+  // Extract date from image using Groq API
+  // Modify the extractDate function to properly handle MM/DD/YYYY format
+  const extractDate = async () => {
+    if (!imagePreview) return;
+
     setExtracting(true);
     setExtractError('');
 
-    // Simulate API call delay
-    setTimeout(() => {
-      // Generate a random date in DD/MM/YYYY format
-      const day = String(Math.floor(Math.random() * 28) + 1).padStart(2, '0');
-      const month = String(Math.floor(Math.random() * 12) + 1).padStart(2, '0');
-      const year = String(Math.floor(Math.random() * 5) + 2020);
-
-      const mockDate = `${day}/${month}/${year}`;
-      setExtractedDate(mockDate);
-      setExtracting(false);
-    }, 1500);
-  };
-
-  // Apply extracted date to the form
-  const applyExtractedDate = () => {
-    if (extractedDate) {
-      setFormData({
-        ...formData,
-        date: extractedDate
+    try {
+      // Create a Groq client instance with browser support enabled
+      const groq = new Groq({
+        apiKey: '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',
+        dangerouslyAllowBrowser: true
       });
-      setShowDateExtractor(false);
+
+      // Create an appropriate prompt based on material type
+      const dateType = formData.materialType === 'vine' ? 'manufacturing' : 'expiry';
+
+      // Construct the messages for the API call
+      const messages = [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": `Look at this image and extract the ${dateType} date from the product label or packaging. Return the date in DD/MM/YYYY format only. If you find a date in MM/DD/YYYY format, please convert it to DD/MM/YYYY format. If you can't find a clear date, identify any date-like patterns and convert them to DD/MM/YYYY format.`
+            },
+            {
+              "type": "image_url",
+              "image_url": {
+                "url": imagePreview
+              }
+            }
+          ]
+        }
+      ];
+
+      // Make the API call
+      const chatCompletion = await groq.chat.completions.create({
+        messages: messages,
+        model: "llama-3.2-90b-vision-preview",
+        temperature: 0.2,
+        max_completion_tokens: 128,
+        top_p: 1,
+        stream: false
+      });
+
+      // Extract the response text
+      const responseText = chatCompletion.choices[0].message.content;
+      console.log("Groq API Date Extraction Response:", responseText);
+
+      // Try to find a date pattern in the response
+      let extractedDate = '';
+
+      // First look for DD/MM/YYYY pattern
+      const ddmmyyyyRegex = /(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{4})/g;
+      const dateMatches = [...responseText.matchAll(ddmmyyyyRegex)];
+
+      if (dateMatches.length > 0) {
+        // Get the first match
+        const match = dateMatches[0];
+        let day = match[1].padStart(2, '0');
+        let month = match[2].padStart(2, '0');
+        let year = match[3];
+
+        // If we have a date with month > 12, it's likely MM/DD/YYYY format
+        // so we need to swap day and month
+        if (parseInt(month) > 12) {
+          [day, month] = [month, day];
+        }
+
+        // Check if the date is likely MM/DD/YYYY format (common in US)
+        // Look for clues in the response text
+        const isLikelyUSFormat = responseText.includes("MM/DD/YYYY") ||
+          responseText.includes("US format") ||
+          responseText.toLowerCase().includes("month") &&
+          responseText.toLowerCase().indexOf("month") <
+          responseText.toLowerCase().indexOf("day");
+
+        if (isLikelyUSFormat && parseInt(month) <= 12 && parseInt(day) <= 31) {
+          // Swap month and day for US format
+          [day, month] = [month, day];
+        }
+
+        extractedDate = `${day}/${month}/${year}`;
+      } else {
+        // If no pattern found, check if there's any mention of date or numbers
+        const dateMention = responseText.match(/(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?([a-zA-Z]+)[,\s]+(\d{4})/i);
+
+        if (dateMention) {
+          const day = dateMention[1].padStart(2, '0');
+          const monthNames = ["january", "february", "march", "april", "may", "june",
+            "july", "august", "september", "october", "november", "december"];
+          const monthIndex = monthNames.findIndex(m =>
+            dateMention[2].toLowerCase().includes(m.toLowerCase()));
+
+          if (monthIndex !== -1) {
+            const month = (monthIndex + 1).toString().padStart(2, '0');
+            const year = dateMention[3];
+            extractedDate = `${day}/${month}/${year}`;
+          }
+        }
+      }
+
+      // Validate the extracted date
+      if (extractedDate && isValidDateFormat(extractedDate)) {
+        setExtractedDate(extractedDate);
+        setExtractError('');
+      } else {
+        // Try to extract expiry date specifically if it's mentioned
+        if (responseText.toLowerCase().includes("expire") ||
+          responseText.toLowerCase().includes("expiry")) {
+          const expiryMatch = responseText.match(/expires?[:\s]+(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{4})/i);
+
+          if (expiryMatch) {
+            let day = expiryMatch[1].padStart(2, '0');
+            let month = expiryMatch[2].padStart(2, '0');
+            let year = expiryMatch[3];
+
+            // Check if it's likely MM/DD/YYYY
+            if (parseInt(month) > 12) {
+              [day, month] = [month, day];
+            }
+
+            extractedDate = `${day}/${month}/${year}`;
+            setExtractedDate(extractedDate);
+            setExtractError('');
+          } else {
+            // Fallback to a default date
+            setDefaultDate();
+          }
+        } else {
+          // Fallback to a default date
+          setDefaultDate();
+        }
+      }
+
+      setExtracting(false);
+    } catch (error) {
+      console.error('Error extracting date with Groq API:', error);
+      setExtractError(`Failed to extract date: ${error.message || 'Unknown error'}`);
+      setDefaultDate();
+      setExtracting(false);
     }
   };
+
+  // Helper function to set a default date
+  const setDefaultDate = () => {
+    const today = new Date();
+    let defaultDate;
+
+    if (formData.materialType === 'vine') {
+      // For vine items, use 6 months ago as default
+      defaultDate = new Date();
+      defaultDate.setMonth(today.getMonth() - 6);
+    } else {
+      // For other items, use 1 year ahead as default
+      defaultDate = new Date();
+      defaultDate.setFullYear(today.getFullYear() + 1);
+    }
+
+    const day = String(defaultDate.getDate()).padStart(2, '0');
+    const month = String(defaultDate.getMonth() + 1).padStart(2, '0');
+    const year = defaultDate.getFullYear();
+
+    const formattedDate = `${day}/${month}/${year}`;
+    setExtractedDate(formattedDate);
+
+    // Show message about using a default date
+    const timeFrame = formData.materialType === 'vine' ? '6 months ago' : '1 year ahead';
+    setExtractError(`Could not extract a valid date. Using a default date (${timeFrame}).`);
+  };
+
+  // Improved function to apply the extracted date
+  const applyExtractedDate = () => {
+    if (extractedDate) {
+      setFormData(prev => ({
+        ...prev,
+        date: extractedDate
+      }));
+
+      // Clear the modal state
+      setShowDateExtractor(false);
+      setImagePreview(null);
+      setExtractError('');
+    }
+  };
+
+  // Add this function if missing - convert MM/DD format to DD/MM
+  function convertMMDDToDD(dateStr) {
+    if (!dateStr || dateStr.length !== 5) return dateStr;
+
+    const parts = dateStr.split('/');
+    if (parts.length !== 2) return dateStr;
+
+    return `${parts[1]}/${parts[0]}`;
+  }
 
   // Validate date format (DD/MM/YYYY)
   const isValidDateFormat = (dateStr) => {
@@ -1342,8 +1749,8 @@ const Dashboard = () => {
       date.getFullYear() === year;
   };
 
-  // Submit form
-  const handleSubmit = (e) => {
+  // Submit form - add item to Firebase
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
     // Validation
@@ -1369,62 +1776,71 @@ const Dashboard = () => {
       return;
     }
 
-    // Prepare data based on material type
-    const newItem = {
-      id: `id-${inventoryData.length + 1}`,
-      uid: formData.uid,
-      name: formData.material,
-      materialType: formData.materialType,
-      material: formData.material,
-      quantity: parseInt(formData.quantity),
-      price: parseFloat(formData.price),
-      createdAt: new Date().toISOString()
-    };
+    try {
+      // Prepare data based on material type
+      const newItem = {
+        uid: formData.uid,
+        name: formData.material,
+        materialType: formData.materialType,
+        material: formData.material,
+        quantity: parseInt(formData.quantity),
+        price: parseFloat(formData.price),
+        createdAt: new Date()
+      };
 
-    // Add appropriate date field based on material type
-    if (formData.materialType === 'vine') {
-      newItem.manufacturingDate = formData.date;
-      // Calculate age related properties
-      const ageInMonths = getVineAgeInMonths(formData.date);
-      const ageClassification = getVineAgeClassification(ageInMonths);
+      // Add appropriate date field based on material type
+      if (formData.materialType === 'vine') {
+        newItem.manufacturingDate = formData.date;
+        // Calculate age related properties
+        const ageInMonths = getVineAgeInMonths(formData.date);
+        const ageClassification = getVineAgeClassification(ageInMonths);
 
-      newItem.ageInMonths = ageInMonths;
-      newItem.ageClassification = ageClassification;
-      newItem.daysUntilExpiry = null;
-      newItem.expiryStatus = { bg: ageClassification.bg, text: ageClassification.text };
-      newItem.expiryText = `${ageClassification.label} (${ageInMonths || 0} months)`;
-    } else {
-      newItem.expiryDate = formData.date;
-      // Calculate expiry related properties
-      const daysUntilExpiry = getDaysUntilExpiry(formData.date);
-      const expiryStatus = getExpiryStatusColor(daysUntilExpiry);
-      const expiryText = getExpiryStatusText(daysUntilExpiry);
+        newItem.ageInMonths = ageInMonths;
+        newItem.ageClassification = ageClassification;
+        newItem.daysUntilExpiry = null;
+        newItem.expiryStatus = { bg: ageClassification.bg, text: ageClassification.text };
+        newItem.expiryText = `${ageClassification.label} (${ageInMonths || 0} months)`;
+      } else {
+        newItem.expiryDate = formData.date;
+        // Calculate expiry related properties
+        const daysUntilExpiry = getDaysUntilExpiry(formData.date);
+        const expiryStatus = getExpiryStatusColor(daysUntilExpiry);
+        const expiryText = getExpiryStatusText(daysUntilExpiry);
 
-      newItem.daysUntilExpiry = daysUntilExpiry;
-      newItem.expiryStatus = expiryStatus;
-      newItem.expiryText = expiryText;
-      newItem.ageInMonths = null;
-      newItem.ageClassification = null;
+        newItem.daysUntilExpiry = daysUntilExpiry;
+        newItem.expiryStatus = expiryStatus;
+        newItem.expiryText = expiryText;
+        newItem.ageInMonths = null;
+        newItem.ageClassification = null;
+      }
+
+      // Add to Firestore
+      const docRef = await addDoc(collection(db, 'inventory'), newItem);
+      console.log("Document written with ID: ", docRef.id);
+
+      // Refresh the data
+      await refreshInventoryData();
+
+      // Generate a new UID for the next item
+      const newUid = await generateUniqueId(formData.materialType);
+
+      // Reset form
+      setFormData({
+        uid: newUid,
+        materialType: formData.materialType, // Keep the same material type
+        material: '',
+        date: '',
+        quantity: 1,
+        price: ''
+      });
+
+      // Show success message
+      setFormSuccess('Item added to inventory');
+      setTimeout(() => setFormSuccess(''), 3000);
+    } catch (error) {
+      console.error("Error adding document to Firebase:", error);
+      setFormError(`Error adding item: ${error.message}`);
     }
-
-    // Add to inventory data
-    const updatedData = [newItem, ...inventoryData];
-    setInventoryData(updatedData);
-    calculateStats(updatedData);
-
-    // Reset form
-    setFormData({
-      uid: generateUniqueId(formData.materialType), // Generate new ID for next item
-      materialType: formData.materialType, // Keep the same material type
-      material: '',
-      date: '',
-      quantity: 1,
-      price: ''
-    });
-
-    // Show success message
-    setFormSuccess('Item added to inventory');
-    setTimeout(() => setFormSuccess(''), 3000);
   };
 
   // Export data to CSV
@@ -1483,12 +1899,27 @@ const Dashboard = () => {
     setSortOption(e.target.value);
   };
 
-  // Delete inventory item
-  const deleteInventoryItem = (id) => {
+  // Delete inventory item from Firebase
+  const deleteInventoryItem = async (id) => {
     if (window.confirm('Are you sure you want to delete this item?')) {
-      const updatedData = inventoryData.filter(item => item.id !== id);
-      setInventoryData(updatedData);
-      calculateStats(updatedData);
+      try {
+        // Delete from Firestore
+        await deleteDoc(doc(db, 'inventory', id));
+        console.log(`Document with ID ${id} deleted`);
+
+        // Update local state
+        const updatedData = inventoryData.filter(item => item.id !== id);
+        setInventoryData(updatedData);
+        calculateStats(updatedData);
+
+        // Show success notification
+        setFormSuccess('Item deleted successfully');
+        setTimeout(() => setFormSuccess(''), 3000);
+      } catch (error) {
+        console.error("Error deleting document:", error);
+        setFormError(`Error deleting item: ${error.message}`);
+        setTimeout(() => setFormError(''), 3000);
+      }
     }
   };
 
@@ -1574,7 +2005,7 @@ const Dashboard = () => {
       <div className="flex justify-center items-center h-screen bg-red-50">
         <div className="flex flex-col items-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-700 mb-4"></div>
-          <p className="text-red-700">Loading inventory data...</p>
+          <p className="text-red-700">Loading inventory data from Firebase...</p>
         </div>
       </div>
     );
@@ -1586,6 +2017,7 @@ const Dashboard = () => {
         {/* Header */}
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-red-800">Inventory Management</h1>
+          <p className="text-sm text-red-600">{inventoryData.length} items loaded from Firebase</p>
         </div>
 
         {/* Tabs */}
@@ -1856,6 +2288,14 @@ const Dashboard = () => {
                   Export Inventory to CSV
                 </button>
 
+                <button
+                  onClick={refreshInventoryData}
+                  className="w-full flex items-center justify-center p-3 bg-green-600 text-white rounded hover:bg-green-700"
+                >
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  Refresh Data from Firebase
+                </button>
+
                 <GeneralImageRecognition />
 
                 <div className="p-3 bg-yellow-50 border border-yellow-200 rounded text-sm">
@@ -1925,7 +2365,7 @@ const Dashboard = () => {
                         <p className="text-sm text-purple-500 mt-1">Vine Value: {formatPrice(stats.vineValue)}</p>
                       </div>
 
-                      <div className="bg-gradient-to-br from-amber-50 to-amber-100 p-4 rounded-lg shadow-sm border border-amber-200">
+                      <div className="bg-gradient-to-brfrom-amber-50 to-amber-100 p-4 rounded-lg shadow-sm border border-amber-200">
                         <h3 className="text-gray-500 text-sm">Expiring Soon</h3>
                         <div className="flex justify-between items-center mt-2">
                           <p className="text-2xl font-bold text-amber-700">{stats.expiringItems}</p>
@@ -2235,18 +2675,18 @@ const Dashboard = () => {
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm">
                                   {item.materialType === 'vine' ? (
-                                    <div className={`rounded-full px-3 py-1 text-xs font-medium inline-flex items-center ${item.expiryStatus.bg} ${item.expiryStatus.text}`}>
+                                    <div className={`rounded-full px-3 py-1 text-xs font-medium inline-flex items-center ${item.expiryStatus?.bg || 'bg-gray-100'} ${item.expiryStatus?.text || 'text-gray-600'}`}>
                                       <Star className="w-3 h-3 mr-1" />
-                                      {item.expiryText}
+                                      {item.expiryText || 'Unknown'}
                                     </div>
                                   ) : (
-                                    <div className={`rounded-full px-3 py-1 text-xs font-medium inline-flex items-center ${item.expiryStatus.bg} ${item.expiryStatus.text}`}>
+                                    <div className={`rounded-full px-3 py-1 text-xs font-medium inline-flex items-center ${item.expiryStatus?.bg || 'bg-gray-100'} ${item.expiryStatus?.text || 'text-gray-600'}`}>
                                       {item.daysUntilExpiry < 0 ? (
                                         <AlertTriangle className="w-3 h-3 mr-1" />
                                       ) : (
                                         <Clock className="w-3 h-3 mr-1" />
                                       )}
-                                      {item.expiryText}
+                                      {item.expiryText || 'Unknown'}
                                     </div>
                                   )}
                                 </td>

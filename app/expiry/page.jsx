@@ -84,7 +84,7 @@ export default function DirectAnalyzer() {
       });
 
       // Groq API key - in production this should be handled securely through environment variables
-      const groqApiKey = "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";
+      const groqApiKey = "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";
       
       // Call Groq API directly
       const response = await axios({

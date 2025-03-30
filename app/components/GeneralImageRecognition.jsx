@@ -1,9 +1,10 @@
 'use client'
 
 import React, { useState, useRef } from 'react';
-import { Camera, Upload, X, RefreshCw, Check, Search, Scan } from 'lucide-react';
+import { Camera, Upload, X, RefreshCw, Search, Scan } from 'lucide-react';
+import Groq from 'groq-sdk';
 
-// General Image Recognition Component for detecting all items, not just inventory items
+// General Image Recognition Component for detecting all items
 const GeneralImageRecognition = () => {
   const [imagePreview, setImagePreview] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -11,9 +12,6 @@ const GeneralImageRecognition = () => {
   const [showModal, setShowModal] = useState(false);
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
-  
-  // Groq API Key - hardcoded for demonstration purposes
-  const GROQ_API_KEY = "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";
 
   // Handle file upload
   const handleFileChange = (e) => {
@@ -174,53 +172,75 @@ const GeneralImageRecognition = () => {
     input.click();
   };
 
-  // Analyze image using Groq API with the general prompt for all items
+  // Analyze image using Groq API for general object detection
   const analyzeImage = async () => {
     if (!imagePreview) return;
-    
+
     setIsAnalyzing(true);
     setError('');
-    
+    setAnalysisResult(''); // Reset previous analysis result
+
     try {
-      // In a real implementation, this would call a backend API that interfaces with Groq
-      
-      // Mock API call delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Create a Groq client instance with browser support enabled
+      const groq = new Groq({
+        apiKey: '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', // Enter your API key here
+        dangerouslyAllowBrowser: true // Required for browser environments
+      });
 
-      // Simulate Groq API response - this would normally come from the backend
-      const mockResponse = `The image contains the following items:
+      // Construct the messages for the API call
+      const messages = [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Analyze this image and tell me what you see. Please identify all objects and food items visible in the image, and describe their condition."
+            },
+            {
+              "type": "image_url",
+              "image_url": {
+                "url": imagePreview // Base64 image data
+              }
+            }
+          ]
+        }
+      ];
 
-*Fruits:*
-- Watermelons (3)
-- Tomatoes (2)
-- Lettuce (2 bunches)
-- Carrots (1 bunch)
+      // Make the API call
+      const chatCompletion = await groq.chat.completions.create({
+        messages: messages,
+        model: "llama-3.2-90b-vision-preview", // Using the vision-enabled model
+        temperature: 0.5,
+        max_completion_tokens: 1024,
+        top_p: 1,
+        stream: false
+      });
 
-*Dairy products:*
-- Milk (4 jugs)
-- Yogurt (2 cups)
-
-*Beverages:*
-- Orange juice (2 jugs)
-- Mango juice (1 jug)
-
-*Vegetables:*
-- Celery (3 stalks)
-- Asparagus (1 bunch)
-- Zucchini (2)
-
-*Other items:*
-- Plastic containers (5)
-- Glass bottles (6)`;
-      
-      setAnalysisResult(mockResponse);
+      // Extract the response text
+      const responseText = chatCompletion.choices[0].message.content;
+      setAnalysisResult(responseText);
       setIsAnalyzing(false);
-      
     } catch (error) {
-      console.error('Error analyzing image:', error);
-      setError('Failed to analyze image. Please try again.');
-      setIsAnalyzing(false);
+      console.error('Error analyzing image with Groq API:', error);
+      // Fallback to simulation for demo purposes if API fails
+      simulateAnalysis();
     }
+  };
+
+  // Simulate analysis for demo purposes when API fails
+  const simulateAnalysis = () => {
+    setTimeout(() => {
+      const simulatedResponses = [
+        "I can see a plate with what appears to be leftover pasta with tomato sauce. There are also some vegetables on the side, likely broccoli and carrots. The food looks partially eaten but still fresh.",
+        "This image shows several food items on a kitchen counter. I can see fresh fruits including apples and bananas. There's also what appears to be a loaf of bread that's starting to look slightly stale around the edges.",
+        "The image contains a bowl of soup or stew with visible vegetables and meat pieces. It appears to be freshly prepared and steaming. Next to it is a glass of water and some cutlery.",
+        "I can see what looks like food waste in a bin. There are vegetable peels, some bread crusts, and what appears to be leftover rice. This would be classified as organic waste suitable for composting."
+      ];
+      
+      const randomResponse = simulatedResponses[Math.floor(Math.random() * simulatedResponses.length)];
+      setAnalysisResult(randomResponse + "\n\n(Note: This is a simulated response since API connection failed. Please check your API key or connection.)");
+      setIsAnalyzing(false);
+    }, 1500);
   };
 
   // Modal close handler
@@ -332,11 +352,10 @@ const GeneralImageRecognition = () => {
                 <button
                   onClick={analyzeImage}
                   disabled={!imagePreview || isAnalyzing}
-                  className={`flex-1 py-2 px-4 rounded flex items-center justify-center text-white ${
-                    !imagePreview || isAnalyzing
-                      ? 'bg-gray-300 cursor-not-allowed'
-                      : 'bg-blue-600 hover:bg-blue-700'
-                  }`}
+                  className={`flex-1 py-2 px-4 rounded flex items-center justify-center text-white ${!imagePreview || isAnalyzing
+                    ? 'bg-gray-300 cursor-not-allowed'
+                    : 'bg-blue-600 hover:bg-blue-700'
+                    }`}
                 >
                   {isAnalyzing ? (
                     <>
