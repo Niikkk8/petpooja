@@ -3,13 +3,15 @@
 import { motion } from 'framer-motion';
 import { FaGithub, FaLinkedin, FaTwitter } from 'react-icons/fa';
 
-const TeamSection = () => {
+const TeamSection = ({ currentTheme = 'red' }) => {
     const teamMembers = [
         {
             id: 1,
             name: "Chinmay Patel",
             role: "Full Stack Developer",
-            imagePlaceholder: "bg-red-200",
+            bio: "Passionate about building scalable web applications and AI integrations",
+            imageUrl: "/api/placeholder/250/250",
+            imagePlaceholder: `bg-${currentTheme}-200`,
             socialLinks: {
                 github: "#",
                 linkedin: "#",
@@ -20,7 +22,9 @@ const TeamSection = () => {
             id: 2,
             name: "Dev Mehta",
             role: "AI & ML Engineer",
-            imagePlaceholder: "bg-red-300",
+            bio: "Specializes in computer vision and deep learning for real-time object detection",
+            imageUrl: "/api/placeholder/250/250",
+            imagePlaceholder: `bg-${currentTheme}-300`,
             socialLinks: {
                 github: "#",
                 linkedin: "#",
@@ -31,7 +35,9 @@ const TeamSection = () => {
             id: 3,
             name: "Prem Joshi",
             role: "UI/UX Designer",
-            imagePlaceholder: "bg-red-400",
+            bio: "Creates intuitive interfaces that balance aesthetics with functionality",
+            imageUrl: "/api/placeholder/250/250",
+            imagePlaceholder: `bg-${currentTheme}-400`,
             socialLinks: {
                 github: "#",
                 linkedin: "#",
@@ -42,7 +48,9 @@ const TeamSection = () => {
             id: 4,
             name: "Niket Shah",
             role: "Backend Developer",
-            imagePlaceholder: "bg-red-500",
+            bio: "Expert in building robust APIs and database architecture",
+            imageUrl: "/api/placeholder/250/250",
+            imagePlaceholder: `bg-${currentTheme}-500`,
             socialLinks: {
                 github: "#",
                 linkedin: "#",
@@ -75,38 +83,46 @@ const TeamSection = () => {
                             whileInView={{ opacity: 1, y: 0 }}
                             transition={{ duration: 0.5, delay: index * 0.1 }}
                             viewport={{ once: true }}
-                            className="bg-white rounded-xl overflow-hidden shadow-lg"
+                            whileHover={{ y: -5, boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)' }}
+                            className="bg-white rounded-xl overflow-hidden shadow-lg transform transition-all duration-300"
                         >
-                            <div className={`h-48 ${member.imagePlaceholder} flex items-center justify-center`}>
+                            <div className={`h-48 ${member.imagePlaceholder} flex items-center justify-center relative group overflow-hidden`}>
                                 <span className="text-3xl font-bold text-white">
                                     {member.name.split(' ').map(part => part[0]).join('')}
                                 </span>
+                                
+                                {/* Hover overlay with additional info */}
+                                <div className={`absolute inset-0 bg-${currentTheme}-600 bg-opacity-80 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity duration-300`}>
+                                    <div className="p-4 text-white text-center">
+                                        <p className="text-sm font-light">{member.bio}</p>
+                                    </div>
+                                </div>
                             </div>
                             <div className="p-6">
                                 <h3 className="text-xl font-bold text-gray-900 mb-1">{member.name}</h3>
-                                <p className="text-gray-600 mb-4">{member.role}</p>
+                                <p className={`text-${currentTheme}-600 mb-4`}>{member.role}</p>
                                 <div className="flex space-x-4">
-                                    <a
-                                        href={member.socialLinks.github}
-                                        target="_blank"
+                                    <a 
+                                        href={member.socialLinks.github} 
+                                        target="_blank" 
                                         rel="noopener noreferrer"
-                                        className="text-gray-500 hover:text-red-600 transition-colors"
+                                        className="text-gray-500 hover:text-gray-800 transition-colors"
                                     >
                                         <FaGithub size={20} />
                                     </a>
-                                    <a
-                                        href={member.socialLinks.linkedin}
-                                        target="_blank"
+                                    <a 
+                                        href={member.socialLinks.linkedin} 
+                                        target="_blank" 
                                         rel="noopener noreferrer"
-                                        className="text-gray-500 hover:text-red-600 transition-colors"
+                                        className="text-gray-500 hover:text-blue-600 transition-colors"
                                     >
                                         <FaLinkedin size={20} />
                                     </a>
-                                    <a
-                                        href={member.socialLinks.twitter}
-                                        target="_blank"
+                                    <a 
+                                        href={member.socialLinks.twitter} 
+                                        target="_blank" 
                                         rel="noopener noreferrer"
-                                        className="text-gray-500 hover:text-red-600 transition-colors"
+                                        className="text-gray-500 hover:text-blue-400 transition-colors"
                                     >
                                         <FaTwitter size={20} />
                                     </a>

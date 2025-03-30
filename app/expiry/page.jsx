@@ -8,7 +8,7 @@ import axios from 'axios';
 export default function DirectAnalyzer() {
   const [image, setImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
-  const [prompt, setPrompt] = useState('What is the expiry date in this');
+  const [prompt, setPrompt] = useState('Analyze the provided image or text and identify the expiry date. Return the expiry date in a standard format (e.g., MM/DD/YYYY or DD-MM-YYYY) if present. If no expiry date is found, indicate that it is not available or unclear. Ignore any irrelevant dates or numbers that do not explicitly relate to an expiration.');
   const [response, setResponse] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -102,7 +102,7 @@ export default function DirectAnalyzer() {
               content: [
                 {
                   type: "text",
-                  text: prompt || "Analyze the provided image or text and identify the expiry date. Return the expiry date in a standard format (e.g., MM/DD/YYYY or DD-MM-YYYY) if present. If no expiry date is found, indicate that it is not available or unclear. Ignore any irrelevant dates or numbers that do not explicitly relate to an expiration."
+                  text: prompt
                 },
                 {
                   type: "image_url",
