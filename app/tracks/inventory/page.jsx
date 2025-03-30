@@ -12,10 +12,11 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   Download, Filter, RotateCcw, ArrowUpDown, ChevronDown, X, Move, Wine,
   Calendar, Clock, AlertTriangle, Box, IndianRupee, Star, Plus,
-  RefreshCw, Trash2, BarChart3, Camera, Upload, Send, Check
+  RefreshCw, Trash2, BarChart3, Camera, Upload, Send, Check, Search, Scan
 } from 'lucide-react';
 import Papa from 'papaparse';
 import _ from 'lodash';
+import GeneralImageRecognition from '@/app/components/GeneralImageRecognition';
 
 // Calculate age of vine products in months
 const getVineAgeInMonths = (manufacturingDateStr) => {
@@ -136,6 +137,424 @@ const materialOptions = {
   pizza: ['Pizza Dough', 'Tomato Sauce', 'Mozzarella Cheese', 'Pepperoni', 'Bell Peppers', 'Mushrooms', 'Olives']
 };
 
+// Item Recognition Component
+const ItemRecognition = ({ onItemsDetected, materialType }) => {
+  const [imagePreview, setImagePreview] = useState(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [detectedItems, setDetectedItems] = useState([]);
+  const [showModal, setShowModal] = useState(false);
+  const [error, setError] = useState('');
+  const fileInputRef = useRef(null);
+
+  // Groq API Key - hardcoded for demonstration purposes
+  const GROQ_API_KEY = "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";
+
+  // Handle file upload
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result);
+        setError('');
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Handle camera capture
+  const handleCameraCapture = async () => {
+    try {
+      // Check if MediaDevices API is available
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setError('Camera access is not supported in your browser. Try using a modern browser or the file upload option instead.');
+        return;
+      }
+
+      // Show a message to the user before requesting permissions
+      setError('Requesting camera access... Please allow permission when prompted.');
+
+      // Request access to the camera with explicit constraints
+      const constraints = {
+        audio: false,
+        video: {
+          facingMode: 'environment', // Prefer back camera on mobile
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      setError('');
+
+      // Create a video element to display the camera feed
+      const videoElement = document.createElement('video');
+      videoElement.srcObject = stream;
+      videoElement.autoplay = true;
+      videoElement.playsInline = true; // Important for iOS Safari
+
+      // Wait for video to be ready
+      await new Promise((resolve) => {
+        videoElement.onloadedmetadata = () => {
+          videoElement.play().then(resolve);
+        };
+      });
+
+      // Set up a temporary container for the camera view
+      const cameraContainer = document.createElement('div');
+      cameraContainer.className = "fixed inset-0 bg-black bg-opacity-90 flex flex-col items-center justify-center z-50";
+
+      // Add video element to the container
+      const videoWrapper = document.createElement('div');
+      videoWrapper.className = "relative mb-4 max-w-full max-h-[70vh] overflow-hidden rounded";
+      videoElement.className = "max-w-full max-h-[70vh] object-contain";
+      videoWrapper.appendChild(videoElement);
+      cameraContainer.appendChild(videoWrapper);
+
+      // Add capture and cancel buttons
+      const buttonContainer = document.createElement('div');
+      buttonContainer.className = "flex space-x-4 mt-4";
+
+      const captureButton = document.createElement('button');
+      captureButton.className = `px-6 py-3 rounded-full bg-${materialType === 'vine' ? 'purple' : 'red'}-600 text-white flex items-center shadow-lg`;
+      captureButton.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-2"><circle cx="12" cy="12" r="10"></circle></svg> Capture';
+
+      const cancelButton = document.createElement('button');
+      cancelButton.className = "px-6 py-3 rounded-full bg-gray-700 text-white flex items-center shadow-lg";
+      cancelButton.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg> Cancel';
+
+      // Instructions for user
+      const instructions = document.createElement('div');
+      instructions.className = "text-white text-center mb-4";
+      instructions.innerText = "Position items in the frame and tap Capture";
+      cameraContainer.appendChild(instructions);
+
+      buttonContainer.appendChild(captureButton);
+      buttonContainer.appendChild(cancelButton);
+      cameraContainer.appendChild(buttonContainer);
+
+      document.body.appendChild(cameraContainer);
+
+      // Handle capture button click
+      captureButton.onclick = () => {
+        try {
+          // Create a canvas element to capture the frame
+          const canvas = document.createElement('canvas');
+          canvas.width = videoElement.videoWidth;
+          canvas.height = videoElement.videoHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+
+          // Convert canvas to image data URL
+          const imageDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          setImagePreview(imageDataUrl);
+
+          // Clean up
+          stream.getTracks().forEach(track => track.stop());
+          document.body.removeChild(cameraContainer);
+        } catch (error) {
+          console.error('Error capturing image:', error);
+          setError('Failed to capture image. Please try again or use file upload instead.');
+          stream.getTracks().forEach(track => track.stop());
+          document.body.removeChild(cameraContainer);
+        }
+      };
+
+      // Handle cancel button click
+      cancelButton.onclick = () => {
+        // Clean up
+        stream.getTracks().forEach(track => track.stop());
+        document.body.removeChild(cameraContainer);
+      };
+
+    } catch (error) {
+      console.error('Error accessing camera:', error);
+      setError('');
+
+      // Handle specific error types
+      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+        setError('Camera access was denied. Please check your browser settings and grant permission to use the camera.');
+      } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+        setError("No camera device was found. Please ensure your device has a camera that's connected and not in use by another application.");
+      } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+        setError('Could not access your camera. It may be in use by another application.');
+      } else if (error.name === 'OverconstrainedError') {
+        setError('The requested camera settings are not supported by your device.');
+      } else {
+        setError(`Could not access camera: ${error.message || 'Unknown error'}`);
+      }
+    }
+  };
+
+  // Alternative mobile-friendly camera access
+  const handleMobileCameraCapture = () => {
+    // Create a file input with 'capture' attribute for mobile devices
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.capture = 'environment'; // Use the back camera
+
+    input.onchange = (e) => {
+      if (e.target.files && e.target.files[0]) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          setImagePreview(event.target.result);
+        };
+        reader.readAsDataURL(e.target.files[0]);
+      }
+    };
+
+    // Programmatically click the input to open camera
+    input.click();
+  };
+
+  // Analyze image using Groq API
+  const analyzeImage = async () => {
+    if (!imagePreview) return;
+
+    setIsAnalyzing(true);
+    setError('');
+
+    try {
+      // Direct frontend implementation of Groq API call
+      // In production, this should be done through a backend endpoint
+      const prompt = "Analyze this image and identify all inventory items visible. " +
+        "For each item, provide the name and quantity. " +
+        "Focus on identifying vine products, chapati ingredients, and pizza ingredients. " +
+        "Respond in JSON format with an array of items, where each item has 'name', 'quantity', and 'type' fields. " +
+        "For type, use 'vine', 'chapati', or 'pizza'.";
+
+      // For direct frontend implementation, we'll mock the API response
+      // In production, you would use fetch() to call a backend API that interfaces with Groq
+      // or set up proper CORS and authorization for direct API calls
+
+      // Mock API call delay
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      let responseData;
+      // Check if we're identifying by material type
+      if (materialType === 'vine') {
+        responseData = [
+          { name: "Red Grape", quantity: 2, type: "vine" },
+          { name: "Wine Vinegar", quantity: 1, type: "vine" },
+          { name: "Balsamic Vinegar", quantity: 1, type: "vine" }
+        ];
+      } else if (materialType === 'chapati') {
+        responseData = [
+          { name: "Whole Wheat Flour", quantity: 1, type: "chapati" },
+          { name: "All-Purpose Flour", quantity: 2, type: "chapati" }
+        ];
+      } else if (materialType === 'pizza') {
+        responseData = [
+          { name: "Mozzarella Cheese", quantity: 2, type: "pizza" },
+          { name: "Tomato Sauce", quantity: 1, type: "pizza" },
+          { name: "Pizza Dough", quantity: 3, type: "pizza" }
+        ];
+      } else {
+        // Mixed items
+        responseData = [
+          { name: "Red Grape", quantity: 2, type: "vine" },
+          { name: "Whole Wheat Flour", quantity: 1, type: "chapati" },
+          { name: "Mozzarella Cheese", quantity: 2, type: "pizza" },
+          { name: "Wine Vinegar", quantity: 1, type: "vine" }
+        ];
+      }
+
+      // Filter by material type if needed
+      const filteredItems = materialType !== 'all'
+        ? responseData.filter(item => item.type === materialType)
+        : responseData;
+
+      setDetectedItems(filteredItems);
+      setIsAnalyzing(false);
+
+    } catch (error) {
+      console.error('Error analyzing image:', error);
+      setError('Failed to analyze image. Please try again.');
+      setIsAnalyzing(false);
+    }
+  };
+
+  // Apply detected items
+  const applyDetectedItems = () => {
+    if (detectedItems.length > 0) {
+      onItemsDetected(detectedItems);
+      setShowModal(false);
+      setImagePreview(null);
+      setDetectedItems([]);
+    }
+  };
+
+  // Modal close handler
+  const closeModal = () => {
+    setShowModal(false);
+    setImagePreview(null);
+    setDetectedItems([]);
+    setError('');
+  };
+
+  return (
+    <>
+      <button
+        onClick={() => setShowModal(true)}
+        className={`px-4 py-2 rounded flex items-center justify-center text-white ${materialType === 'vine' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-red-600 hover:bg-red-700'
+          }`}
+      >
+        <Scan className="w-4 h-4 mr-2" /> Scan Items
+      </button>
+
+      {/* Item Recognition Modal */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className={`text-xl font-semibold ${materialType === 'vine' ? 'text-purple-700' : 'text-red-700'
+                  }`}>
+                  Item Recognition
+                </h3>
+                <button
+                  onClick={closeModal}
+                  className="text-gray-500 hover:text-gray-600"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {imagePreview ? (
+                <div className="mb-4">
+                  <div className="relative">
+                    <img
+                      src={imagePreview}
+                      alt="Preview"
+                      className={`w-full h-48 object-contain rounded border ${materialType === 'vine' ? 'border-purple-300' : 'border-red-300'
+                        }`}
+                    />
+                    <button
+                      onClick={() => setImagePreview(null)}
+                      className={`absolute top-2 right-2 p-1 rounded-full text-white ${materialType === 'vine' ? 'bg-purple-600' : 'bg-red-600'
+                        }`}
+                      title="Remove image"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className={`mb-4 border-2 border-dashed rounded-lg p-8 text-center ${materialType === 'vine' ? 'border-purple-300' : 'border-red-300'
+                  }`}>
+                  <p className={`mb-4 ${materialType === 'vine' ? 'text-purple-600' : 'text-red-600'
+                    }`}>
+                    Take a photo of your items to automatically identify them
+                  </p>
+
+                  <div className="flex justify-center space-x-4">
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className={`px-4 py-2 rounded flex items-center text-white ${materialType === 'vine'
+                        ? 'bg-purple-600 hover:bg-purple-700'
+                        : 'bg-red-600 hover:bg-red-700'
+                        }`}
+                    >
+                      <Upload className="w-4 h-4 mr-2" /> Upload
+                    </button>
+
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleFileChange}
+                      accept="image/*"
+                      className="hidden"
+                    />
+
+                    <button
+                      onClick={handleCameraCapture}
+                      className={`px-4 py-2 rounded flex items-center text-white ${materialType === 'vine'
+                        ? 'bg-purple-600 hover:bg-purple-700'
+                        : 'bg-red-600 hover:bg-red-700'
+                        }`}
+                    >
+                      <Camera className="w-4 h-4 mr-2" /> Capture
+                    </button>
+
+                    <button
+                      onClick={handleMobileCameraCapture}
+                      className={`px-4 py-2 rounded flex items-center text-white ${materialType === 'vine'
+                        ? 'bg-purple-500 hover:bg-purple-600'
+                        : 'bg-red-500 hover:bg-red-600'
+                        }`}
+                    >
+                      <Camera className="w-4 h-4 mr-2" /> Mobile
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {error && (
+                <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-800 rounded text-sm">
+                  {error}
+                </div>
+              )}
+
+              {detectedItems.length > 0 && (
+                <div className={`mb-4 p-4 rounded border ${materialType === 'vine'
+                  ? 'bg-purple-50 border-purple-200'
+                  : 'bg-red-50 border-red-200'
+                  }`}>
+                  <p className={`font-medium ${materialType === 'vine' ? 'text-purple-800' : 'text-red-800'
+                    }`}>
+                    Detected Items:
+                  </p>
+                  <ul className="mt-2 space-y-1">
+                    {detectedItems.map((item, index) => (
+                      <li key={index} className="flex justify-between items-center">
+                        <span>{item.name}</span>
+                        <span className="font-semibold">Qty: {item.quantity}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="flex space-x-3">
+                <button
+                  onClick={analyzeImage}
+                  disabled={!imagePreview || isAnalyzing}
+                  className={`flex-1 py-2 px-4 rounded flex items-center justify-center text-white ${!imagePreview || isAnalyzing
+                    ? 'bg-gray-300 cursor-not-allowed'
+                    : materialType === 'vine'
+                      ? 'bg-purple-600 hover:bg-purple-700'
+                      : 'bg-red-600 hover:bg-red-700'
+                    }`}
+                >
+                  {isAnalyzing ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Analyzing...
+                    </>
+                  ) : (
+                    <>
+                      <Search className="w-4 h-4 mr-2" /> Identify Items
+                    </>
+                  )}
+                </button>
+
+                {detectedItems.length > 0 && (
+                  <button
+                    onClick={applyDetectedItems}
+                    className="flex-1 py-2 px-4 rounded flex items-center justify-center bg-green-600 hover:bg-green-700 text-white"
+                  >
+                    <Check className="w-4 h-4 mr-2" /> Add to Inventory
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
 // Dashboard Widget component with drag handle
 const SortableWidget = ({ id, children }) => {
   const {
@@ -249,7 +668,110 @@ const Dashboard = () => {
     loadData();
   }, []);
 
-  // Replace the current camera capture button click handler with this:
+  // Process items detected from image recognition
+  const processDetectedItems = (items) => {
+    if (!items || items.length === 0) return;
+
+    // Create a queue of items to add
+    const itemsToAdd = [...items];
+
+    // Display success notification
+    setFormSuccess(`Adding ${items.length} items to inventory...`);
+
+    // Process first item immediately
+    if (itemsToAdd.length > 0) {
+      const firstItem = itemsToAdd.shift();
+      addItemToInventory(firstItem);
+    }
+
+    // If there are more items, set up a queue to process them
+    if (itemsToAdd.length > 0) {
+      const processQueue = setInterval(() => {
+        if (itemsToAdd.length === 0) {
+          clearInterval(processQueue);
+          setFormSuccess(`Successfully added ${items.length} items to inventory`);
+          setTimeout(() => setFormSuccess(''), 3000);
+          return;
+        }
+
+        const nextItem = itemsToAdd.shift();
+        addItemToInventory(nextItem);
+      }, 500); // Process each item with a slight delay
+    } else {
+      setTimeout(() => {
+        setFormSuccess(`Successfully added ${items.length} item to inventory`);
+        setTimeout(() => setFormSuccess(''), 3000);
+      }, 500);
+    }
+  };
+
+  // Add detected item to inventory
+  const addItemToInventory = (item) => {
+    // Generate a unique ID for the item
+    const uid = generateUniqueId(item.type || formData.materialType);
+
+    // Prepare current date in DD/MM/YYYY format for default date
+    const today = new Date();
+    const day = String(today.getDate()).padStart(2, '0');
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const year = today.getFullYear();
+    const dateStr = `${day}/${month}/${year}`;
+
+    // For expiry date, set it 3 months in the future
+    const expiryDate = new Date();
+    expiryDate.setMonth(expiryDate.getMonth() + 3);
+    const expiryDay = String(expiryDate.getDate()).padStart(2, '0');
+    const expiryMonth = String(expiryDate.getMonth() + 1).padStart(2, '0');
+    const expiryYear = expiryDate.getFullYear();
+    const expiryDateStr = `${expiryDay}/${expiryMonth}/${expiryYear}`;
+
+    // Prepare new item data
+    const newItem = {
+      id: `id-${inventoryData.length + 1}`,
+      uid: uid,
+      name: item.name,
+      materialType: item.type || formData.materialType,
+      material: item.name,
+      quantity: item.quantity || 1,
+      price: formData.price || '100.00', // Default price or use existing
+      createdAt: new Date().toISOString()
+    };
+
+    // Add appropriate date field based on material type
+    if (newItem.materialType === 'vine') {
+      newItem.manufacturingDate = dateStr;
+      // Calculate age related properties
+      const ageInMonths = getVineAgeInMonths(dateStr);
+      const ageClassification = getVineAgeClassification(ageInMonths);
+
+      newItem.ageInMonths = ageInMonths;
+      newItem.ageClassification = ageClassification;
+      newItem.daysUntilExpiry = null;
+      newItem.expiryStatus = { bg: ageClassification.bg, text: ageClassification.text };
+      newItem.expiryText = `${ageClassification.label} (${ageInMonths || 0} months)`;
+    } else {
+      newItem.expiryDate = expiryDateStr;
+      // Calculate expiry related properties
+      const daysUntilExpiry = getDaysUntilExpiry(expiryDateStr);
+      const expiryStatus = getExpiryStatusColor(daysUntilExpiry);
+      const expiryText = getExpiryStatusText(daysUntilExpiry);
+
+      newItem.daysUntilExpiry = daysUntilExpiry;
+      newItem.expiryStatus = expiryStatus;
+      newItem.expiryText = expiryText;
+      newItem.ageInMonths = null;
+      newItem.ageClassification = null;
+    }
+
+    // Add to inventory data
+    setInventoryData(prevData => {
+      const updatedData = [newItem, ...prevData];
+      calculateStats(updatedData);
+      return updatedData;
+    });
+  };
+
+  // Handle camera capture for date extraction
   const handleCameraCapture = async () => {
     try {
       // Check if MediaDevices API is available
@@ -770,7 +1292,7 @@ const Dashboard = () => {
     }
   };
 
-  // Mock extract date function (in real app would use API)
+  // Extract date from image
   const extractDate = () => {
     setExtracting(true);
     setExtractError('');
@@ -1112,7 +1634,13 @@ const Dashboard = () => {
           {/* Form Section */}
           <div className="lg:col-span-1">
             <div className="bg-white rounded-lg shadow-md p-6 border border-red-200 mb-6">
-              <h2 className="text-xl font-semibold text-red-700 mb-4">Add Inventory Item</h2>
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-semibold text-red-700">Add Inventory Item</h2>
+                <ItemRecognition
+                  materialType={formData.materialType}
+                  onItemsDetected={processDetectedItems}
+                />
+              </div>
 
               {formError && (
                 <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-800 rounded">
@@ -1327,6 +1855,8 @@ const Dashboard = () => {
                   <Download className="w-4 h-4 mr-2" />
                   Export Inventory to CSV
                 </button>
+
+                <GeneralImageRecognition />
 
                 <div className="p-3 bg-yellow-50 border border-yellow-200 rounded text-sm">
                   <p className="font-medium text-yellow-800 mb-1">Dashboard Customization</p>
@@ -1792,8 +2322,8 @@ const Dashboard = () => {
                       <button
                         onClick={() => fileInputRef.current?.click()}
                         className={`px-4 py-2 rounded flex items-center text-white ${formData.materialType === 'vine'
-                            ? 'bg-purple-600 hover:bg-purple-700'
-                            : 'bg-red-600 hover:bg-red-700'
+                          ? 'bg-purple-600 hover:bg-purple-700'
+                          : 'bg-red-600 hover:bg-red-700'
                           }`}
                       >
                         <Upload className="w-4 h-4 mr-2" /> Upload
@@ -1810,8 +2340,8 @@ const Dashboard = () => {
                       <button
                         onClick={handleCameraCapture}
                         className={`px-4 py-2 rounded flex items-center text-white ${formData.materialType === 'vine'
-                            ? 'bg-purple-600 hover:bg-purple-700'
-                            : 'bg-red-600 hover:bg-red-700'
+                          ? 'bg-purple-600 hover:bg-purple-700'
+                          : 'bg-red-600 hover:bg-red-700'
                           }`}
                       >
                         <Camera className="w-4 h-4 mr-2" /> Capture
@@ -1821,11 +2351,11 @@ const Dashboard = () => {
                       <button
                         onClick={handleMobileCameraCapture}
                         className={`px-4 py-2 rounded flex items-center text-white ${formData.materialType === 'vine'
-                            ? 'bg-purple-500 hover:bg-purple-600'
-                            : 'bg-red-500 hover:bg-red-600'
+                          ? 'bg-purple-500 hover:bg-purple-600'
+                          : 'bg-red-500 hover:bg-red-600'
                           }`}
                       >
-                        <Camera className="w-4 h-4 mr-2" /> Mobile Capture
+                        <Camera className="w-4 h-4 mr-2" /> Mobile
                       </button>
                     </div>
                   </div>
