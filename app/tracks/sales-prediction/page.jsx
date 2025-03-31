@@ -28,7 +28,7 @@ export default function Dashboard() {
   // Fetch data summary
   const fetchDataSummary = async () => {
     try {
-      const response = await axios.get(`${API_URL}/data/summary`);
+      const response = await axios.get(`₹{API_URL}/data/summary`);
       if (response.data.success) {
         setSummary(response.data.summary);
       } else {
@@ -44,7 +44,7 @@ export default function Dashboard() {
   const fetchForecasts = async () => {
     setLoading(true);
     try {
-      const response = await axios.get(`${API_URL}/forecast`, {
+      const response = await axios.get(`₹{API_URL}/forecast`, {
         params: { days: forecastDays }
       });
       
@@ -65,7 +65,7 @@ export default function Dashboard() {
   const trainModels = async () => {
     setTraining(true);
     try {
-      const response = await axios.post(`${API_URL}/train`);
+      const response = await axios.post(`₹{API_URL}/train`);
       
       if (response.data.success) {
         toast.success('Models trained successfully');
@@ -141,7 +141,7 @@ export default function Dashboard() {
             </div>
             <div className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-red-500">
               <h3 className="text-gray-500 font-medium mb-2">Average Revenue</h3>
-              <p className="text-lg font-semibold">${summary.averages.revenue.toFixed(2)}</p>
+              <p className="text-lg font-semibold">₹{summary.averages.revenue.toFixed(2)}</p>
               <p className="text-gray-500 mt-2">Per Day</p>
             </div>
             <div className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-red-500">
@@ -283,7 +283,7 @@ export default function Dashboard() {
                     dataKey="value"
                     name={
                       activeTab === 'revenue'
-                        ? 'Revenue ($)'
+                        ? 'Revenue (₹)'
                         : activeTab === 'chicken_kg'
                         ? 'Chicken (kg)'
                         : 'Vegetables (kg)'

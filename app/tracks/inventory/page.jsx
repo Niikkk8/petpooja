@@ -141,7 +141,10 @@ const generateUniqueId = async (materialType) => {
           V: 0, // Vine
           C: 0, // Chapati
           P: 0, // Pizza
-          I: 0  // Generic/Other
+          I: 0, // Generic/Other
+          B: 0, // Bread
+          D: 0, // Dairy
+          F: 0  // Fruits
         };
 
         // Create the counters document
@@ -174,11 +177,53 @@ const generateUniqueId = async (materialType) => {
   }
 };
 
-// Mock data for raw material options
+// Generate a random default expiry date (3-4 days from today)
+const generateDefaultExpiryDate = () => {
+  const today = new Date();
+  const daysToAdd = Math.floor(Math.random() * 2) + 3; // 3 or 4 days
+  const expiryDate = new Date(today);
+  expiryDate.setDate(expiryDate.getDate() + daysToAdd);
+
+  const day = String(expiryDate.getDate()).padStart(2, '0');
+  const month = String(expiryDate.getMonth() + 1).padStart(2, '0');
+  const year = expiryDate.getFullYear();
+
+  return `${day}/${month}/${year}`;
+};
+
+// Enhanced data for material options
 const materialOptions = {
-  vine: ['Red Grape', 'White Grape', 'Green Grape', 'Wine Vinegar', 'Balsamic Vinegar'],
-  chapati: ['Whole Wheat Flour', 'All-Purpose Flour', 'Multigrain Flour', 'Ragi Flour', 'Jowar Flour'],
-  pizza: ['Pizza Dough', 'Tomato Sauce', 'Mozzarella Cheese', 'Pepperoni', 'Bell Peppers', 'Mushrooms', 'Olives']
+  vine: [
+    'Red Grape', 'White Grape', 'Green Grape', 'Wine Vinegar', 'Balsamic Vinegar',
+    'Red Wine', 'White Wine', 'Sparkling Wine', 'Dessert Wine', 'Rosé Wine',
+    'Port Wine', 'Sherry', 'Champagne', 'Merlot', 'Cabernet Sauvignon'
+  ],
+  chapati: [
+    'Whole Wheat Flour', 'All-Purpose Flour', 'Multigrain Flour', 'Ragi Flour', 'Jowar Flour',
+    'Corn Flour', 'Rice Flour', 'Bajra Flour', 'Gram Flour', 'Oat Flour',
+    'Millet Flour', 'Soy Flour', 'Almond Flour', 'Coconut Flour', 'Quinoa Flour'
+  ],
+  pizza: [
+    'Pizza Dough', 'Tomato Sauce', 'Mozzarella Cheese', 'Pepperoni', 'Bell Peppers',
+    'Mushrooms', 'Olives', 'Onions', 'Sausage', 'Bacon',
+    'Ham', 'Pineapple', 'Chicken', 'Ground Beef', 'Spinach',
+    'Feta Cheese', 'Cheddar Cheese', 'BBQ Sauce', 'Pesto Sauce', 'Garlic'
+  ],
+  bread: [
+    'White Bread', 'Wheat Bread', 'Sourdough', 'Rye Bread', 'Multigrain Bread',
+    'Baguette', 'Brioche', 'Focaccia', 'Ciabatta', 'Garlic Bread',
+    'Naan', 'Pita Bread', 'Dinner Rolls', 'Bagels', 'Croissants'
+  ],
+  dairy: [
+    'Milk', 'Butter', 'Cheese', 'Yogurt', 'Cream',
+    'Cottage Cheese', 'Sour Cream', 'Cream Cheese', 'Whipped Cream', 'Ice Cream',
+    'Buttermilk', 'Condensed Milk', 'Evaporated Milk', 'Ghee', 'Paneer'
+  ],
+  fruits: [
+    'Apples', 'Oranges', 'Bananas', 'Grapes', 'Strawberries',
+    'Mangoes', 'Pineapples', 'Watermelons', 'Kiwis', 'Peaches',
+    'Blueberries', 'Papayas', 'Pomegranates', 'Cherries', 'Pears'
+  ]
 };
 
 // Item Recognition Component
@@ -350,7 +395,6 @@ const ItemRecognition = ({ onItemsDetected, materialType }) => {
   };
 
   // Analyze image using Groq API
-  // Analyze image using actual Groq API
   const analyzeImage = async () => {
     if (!imagePreview) return;
 
@@ -720,7 +764,8 @@ const Dashboard = () => {
     vineValue: 0,
     expiringItems: 0,
     expiredItems: 0,
-    vineAgeDistribution: {}
+    vineAgeDistribution: {},
+    materialTypeDistribution: {}
   });
 
   const sensors = useSensors(
@@ -811,13 +856,11 @@ const Dashboard = () => {
               processedItem.expiryText = 'New (0 months)';
               processedItem.daysUntilExpiry = null;
             } else {
-              // Set default expiry date to 1 year from now
-              const oneYearFromNow = new Date();
-              oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
-              processedItem.expiryDate = formatDateToDDMMYYYY(oneYearFromNow);
-              processedItem.daysUntilExpiry = 365;
-              processedItem.expiryStatus = { bg: 'bg-green-50', text: 'text-green-600' };
-              processedItem.expiryText = `Expires in 365 days`;
+              // Set default expiry date to 3-4 days from now
+              processedItem.expiryDate = generateDefaultExpiryDate();
+              processedItem.daysUntilExpiry = Math.floor(Math.random() * 2) + 3; // 3 or 4 days
+              processedItem.expiryStatus = { bg: 'bg-red-50', text: 'text-red-600' };
+              processedItem.expiryText = `Expires in ${processedItem.daysUntilExpiry} days`;
               processedItem.ageInMonths = null;
               processedItem.ageClassification = null;
             }
@@ -931,9 +974,41 @@ const Dashboard = () => {
             ageInMonths: null,
             ageClassification: null
           };
-        }
+        } else {
+          // Add default values for items without proper dates
+          if (item.materialType === 'vine') {
+            const today = new Date();
+            const manufacturingDate = formatDateToDDMMYYYY(today);
+            const ageInMonths = 0;
+            const ageClassification = getVineAgeClassification(ageInMonths);
 
-        return item;
+            return {
+              ...item,
+              manufacturingDate,
+              ageInMonths,
+              ageClassification,
+              expiryStatus: { bg: 'bg-green-50', text: 'text-green-600' },
+              expiryText: 'New (0 months)',
+              daysUntilExpiry: null
+            };
+          } else {
+            // For non-vine products, set default expiry date 3-4 days from now
+            const expiryDate = generateDefaultExpiryDate();
+            const daysUntilExpiry = Math.floor(Math.random() * 2) + 3; // 3 or 4 days
+            const expiryStatus = getExpiryStatusColor(daysUntilExpiry);
+            const expiryText = getExpiryStatusText(daysUntilExpiry);
+
+            return {
+              ...item,
+              expiryDate,
+              daysUntilExpiry,
+              expiryStatus,
+              expiryText,
+              ageInMonths: null,
+              ageClassification: null
+            };
+          }
+        }
       });
 
       setInventoryData(processedData);
@@ -956,13 +1031,8 @@ const Dashboard = () => {
       const year = today.getFullYear();
       const dateStr = `${day}/${month}/${year}`;
 
-      // For expiry date, set it 3 months in the future
-      const expiryDate = new Date();
-      expiryDate.setMonth(expiryDate.getMonth() + 3);
-      const expiryDay = String(expiryDate.getDate()).padStart(2, '0');
-      const expiryMonth = String(expiryDate.getMonth() + 1).padStart(2, '0');
-      const expiryYear = expiryDate.getFullYear();
-      const expiryDateStr = `${expiryDay}/${expiryMonth}/${expiryYear}`;
+      // Generate default expiry date (3-4 days from today)
+      const expiryDateStr = generateDefaultExpiryDate();
 
       // Prepare new item data
       const newItem = {
@@ -1179,7 +1249,7 @@ const Dashboard = () => {
     try {
       const now = new Date();
 
-      const materialTypes = ['vine', 'chapati', 'pizza'];
+      const allMaterialTypes = Object.keys(materialOptions);
 
       const getRandomDate = (start, end) => {
         const startTime = start.getTime();
@@ -1198,13 +1268,18 @@ const Dashboard = () => {
       const getRandomQuantity = () => Math.floor(Math.random() * 50) + 1;
 
       let demoProducts = [];
-      let idCounter = { vine: 0, chapati: 0, pizza: 0 };
+      let idCounter = {};
 
-      // Generate 30 sample products (smaller number for fallback)
-      for (let i = 0; i < 30; i++) {
-        const materialType = materialTypes[Math.floor(Math.random() * materialTypes.length)];
+      // Initialize counters for each material type
+      allMaterialTypes.forEach(type => {
+        idCounter[type] = 0;
+      });
+
+      // Generate 50 sample products
+      for (let i = 0; i < 50; i++) {
+        const materialType = allMaterialTypes[Math.floor(Math.random() * allMaterialTypes.length)];
         const material = materialOptions[materialType][Math.floor(Math.random() * materialOptions[materialType].length)];
-        const idPrefix = materialType === 'vine' ? 'V' : materialType === 'chapati' ? 'C' : 'P';
+        const idPrefix = materialType.charAt(0).toUpperCase();
 
         let product = {
           id: `mock-${i}`,
@@ -1234,28 +1309,32 @@ const Dashboard = () => {
           product.expiryStatus = { bg: ageClassification.bg, text: ageClassification.text };
           product.expiryText = `${ageClassification.label} (${ageInMonths || 0} months)`;
         } else {
-          // Expiry date for chapati and pizza
+          // Generate a random expiry scenario
           const randomFactor = Math.random();
-          let dateRange;
+          let expiryDate;
 
           if (randomFactor < 0.15) {
             // 15% expired products
             const pastDate = new Date(now);
-            pastDate.setDate(pastDate.getDate() - 30);
-            dateRange = { start: pastDate, end: now };
+            pastDate.setDate(pastDate.getDate() - Math.floor(Math.random() * 10) - 1); // 1-10 days ago
+            expiryDate = pastDate;
           } else if (randomFactor < 0.4) {
-            // 25% expiring soon
+            // 25% expiring very soon (1-4 days)
             const soonDate = new Date(now);
-            soonDate.setDate(soonDate.getDate() + 30);
-            dateRange = { start: now, end: soonDate };
+            soonDate.setDate(soonDate.getDate() + Math.floor(Math.random() * 4) + 1); // 1-4 days from now
+            expiryDate = soonDate;
           } else {
-            // 60% future expiry
+            // 60% further expiry (5-30 days)
             const futureDate = new Date(now);
-            futureDate.setMonth(futureDate.getMonth() + 10);
-            dateRange = { start: now, end: futureDate };
+            futureDate.setDate(futureDate.getDate() + Math.floor(Math.random() * 26) + 5); // 5-30 days from now
+            expiryDate = futureDate;
           }
 
-          product.expiryDate = getRandomDate(dateRange.start, dateRange.end);
+          // Format to DD/MM/YYYY
+          const day = String(expiryDate.getDate()).padStart(2, '0');
+          const month = String(expiryDate.getMonth() + 1).padStart(2, '0');
+          const year = expiryDate.getFullYear();
+          product.expiryDate = `${day}/${month}/${year}`;
 
           // Calculate expiry related properties
           const daysUntilExpiry = getDaysUntilExpiry(product.expiryDate);
@@ -1294,9 +1373,21 @@ const Dashboard = () => {
       vintage: 0
     };
 
+    const materialTypeDistribution = {};
+    Object.keys(materialOptions).forEach(type => {
+      materialTypeDistribution[type] = 0;
+    });
+
     data.forEach(item => {
       const itemValue = (parseFloat(item.price) || 0) * (parseInt(item.quantity) || 1);
       totalValue += itemValue;
+
+      // Count by material type
+      if (materialTypeDistribution[item.materialType] !== undefined) {
+        materialTypeDistribution[item.materialType]++;
+      } else {
+        materialTypeDistribution[item.materialType] = 1;
+      }
 
       if (item.materialType === 'vine') {
         vineItems++;
@@ -1330,7 +1421,8 @@ const Dashboard = () => {
       vineValue,
       expiringItems,
       expiredItems,
-      vineAgeDistribution
+      vineAgeDistribution,
+      materialTypeDistribution
     });
   };
 
@@ -1682,13 +1774,12 @@ const Dashboard = () => {
     let defaultDate;
 
     if (formData.materialType === 'vine') {
-      // For vine items, use 6 months ago as default
-      defaultDate = new Date();
-      defaultDate.setMonth(today.getMonth() - 6);
+      // For vine items, use current date as manufacturing date
+      defaultDate = today;
     } else {
-      // For other items, use 1 year ahead as default
+      // For other items, use 3-4 days ahead as expiry
       defaultDate = new Date();
-      defaultDate.setFullYear(today.getFullYear() + 1);
+      defaultDate.setDate(today.getDate() + Math.floor(Math.random() * 2) + 3); // 3 or 4 days
     }
 
     const day = String(defaultDate.getDate()).padStart(2, '0');
@@ -1699,7 +1790,7 @@ const Dashboard = () => {
     setExtractedDate(formattedDate);
 
     // Show message about using a default date
-    const timeFrame = formData.materialType === 'vine' ? '6 months ago' : '1 year ahead';
+    const timeFrame = formData.materialType === 'vine' ? 'today' : '3-4 days ahead';
     setExtractError(`Could not extract a valid date. Using a default date (${timeFrame}).`);
   };
 
@@ -1931,11 +2022,26 @@ const Dashboard = () => {
   // Prepare data for charts
 
   // Material Type Distribution
-  const materialTypeData = [
-    { name: 'Vine', value: stats.vineItems, fill: '#8B5CF6' },
-    { name: 'Chapati', value: inventoryData.filter(item => item.materialType === 'chapati').length, fill: '#F59E0B' },
-    { name: 'Pizza', value: inventoryData.filter(item => item.materialType === 'pizza').length, fill: '#EF4444' }
-  ];
+  const materialTypeData = Object.keys(stats.materialTypeDistribution).map(type => {
+    const count = stats.materialTypeDistribution[type] || 0;
+    let color = '';
+
+    switch (type) {
+      case 'vine': color = '#8B5CF6'; break;
+      case 'chapati': color = '#F59E0B'; break;
+      case 'pizza': color = '#EF4444'; break;
+      case 'bread': color = '#10B981'; break;
+      case 'dairy': color = '#3B82F6'; break;
+      case 'fruits': color = '#EC4899'; break;
+      default: color = '#6B7280';
+    }
+
+    return {
+      name: type.charAt(0).toUpperCase() + type.slice(1),
+      value: count,
+      fill: color
+    };
+  }).filter(item => item.value > 0);
 
   // Vine Age Distribution
   const vineAgeData = [
@@ -1979,7 +2085,7 @@ const Dashboard = () => {
   const displayItems = getDisplayItems();
 
   // Chart colors
-  const COLORS = ['#8B5CF6', '#F59E0B', '#EF4444', '#3B82F6', '#10B981'];
+  const COLORS = ['#8B5CF6', '#F59E0B', '#EF4444', '#3B82F6', '#10B981', '#EC4899', '#6B7280'];
 
   // Custom tooltip for charts
   const CustomTooltip = ({ active, payload, label }) => {
@@ -2113,13 +2219,13 @@ const Dashboard = () => {
                   <label className="block text-red-700 mb-2" htmlFor="materialType">
                     Material Type
                   </label>
-                  <div className="flex items-center border border-red-300 rounded overflow-hidden">
+                  <div className="grid grid-cols-3 gap-2 mb-2">
                     <button
                       type="button"
                       onClick={() => handleMaterialTypeChange({ target: { value: 'vine' } })}
-                      className={`flex-1 p-2 flex justify-center items-center ${formData.materialType === 'vine'
+                      className={`p-2 flex justify-center items-center rounded ${formData.materialType === 'vine'
                         ? 'bg-purple-100 text-purple-700'
-                        : 'bg-white text-gray-700 hover:bg-gray-50'
+                        : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
                         }`}
                     >
                       <Wine className="w-4 h-4 mr-1" />
@@ -2128,9 +2234,9 @@ const Dashboard = () => {
                     <button
                       type="button"
                       onClick={() => handleMaterialTypeChange({ target: { value: 'chapati' } })}
-                      className={`flex-1 p-2 ${formData.materialType === 'chapati'
+                      className={`p-2 rounded ${formData.materialType === 'chapati'
                         ? 'bg-amber-100 text-amber-700'
-                        : 'bg-white text-gray-700 hover:bg-gray-50'
+                        : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
                         }`}
                     >
                       Chapati
@@ -2138,12 +2244,44 @@ const Dashboard = () => {
                     <button
                       type="button"
                       onClick={() => handleMaterialTypeChange({ target: { value: 'pizza' } })}
-                      className={`flex-1 p-2 ${formData.materialType === 'pizza'
+                      className={`p-2 rounded ${formData.materialType === 'pizza'
                         ? 'bg-red-100 text-red-700'
-                        : 'bg-white text-gray-700 hover:bg-gray-50'
+                        : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
                         }`}
                     >
                       Pizza
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleMaterialTypeChange({ target: { value: 'bread' } })}
+                      className={`p-2 rounded ${formData.materialType === 'bread'
+                        ? 'bg-green-100 text-green-700'
+                        : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
+                        }`}
+                    >
+                      Bread
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleMaterialTypeChange({ target: { value: 'dairy' } })}
+                      className={`p-2 rounded ${formData.materialType === 'dairy'
+                        ? 'bg-blue-100 text-blue-700'
+                        : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
+                        }`}
+                    >
+                      Dairy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleMaterialTypeChange({ target: { value: 'fruits' } })}
+                      className={`p-2 rounded ${formData.materialType === 'fruits'
+                        ? 'bg-pink-100 text-pink-700'
+                        : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
+                        }`}
+                    >
+                      Fruits
                     </button>
                   </div>
                 </div>
@@ -2164,7 +2302,7 @@ const Dashboard = () => {
                       }`}
                   >
                     <option value="">Select Material</option>
-                    {materialOptions[formData.materialType].map((option) => (
+                    {materialOptions[formData.materialType]?.map((option) => (
                       <option key={option} value={option}>
                         {option}
                       </option>
@@ -2258,7 +2396,9 @@ const Dashboard = () => {
                     </button>
                   </div>
                   <p className="text-sm text-gray-500 mt-1">
-                    Enter date in DD/MM/YYYY format or scan product label
+                    {formData.materialType === 'vine' ?
+                      'Enter manufacturing date in DD/MM/YYYY format or scan product label' :
+                      'Enter expiry date in DD/MM/YYYY format or scan product label (defaults to 3-4 days if empty)'}
                   </p>
                 </div>
 
@@ -2324,6 +2464,14 @@ const Dashboard = () => {
                     </select>
                   </div>
                 )}
+
+                {/* Quick Expiry Advisory */}
+                <div className="p-3 bg-red-50 border border-red-200 rounded">
+                  <p className="font-medium text-red-800 mb-1">Expiry Advisory</p>
+                  <p className="text-red-700 text-sm">
+                    Items added without dates will be assigned synthetic expiry dates of 3-4 days from today. Check your inventory regularly.
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -2526,6 +2674,9 @@ const Dashboard = () => {
                           <option value="vine">Vine</option>
                           <option value="chapati">Chapati</option>
                           <option value="pizza">Pizza</option>
+                          <option value="bread">Bread</option>
+                          <option value="dairy">Dairy</option>
+                          <option value="fruits">Fruits</option>
                         </select>
                         <ChevronDown className="h-4 w-4 absolute right-3 top-3 pointer-events-none text-gray-500" />
                       </div>
