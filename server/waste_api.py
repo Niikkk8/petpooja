@@ -4,6 +4,9 @@ import os
 import json
 import numpy as np
 import cv2
+from skimage.metrics import structural_similarity as ssim
+import numpy as np
+import cv2
 from PIL import Image
 import torch
 from datetime import datetime
@@ -72,6 +75,121 @@ KITCHEN_ZONES = {
 # In-memory database (replace with real DB in production)
 WASTE_HISTORY = defaultdict(float)
 ZONE_WASTE_HISTORY = defaultdict(lambda: defaultdict(float))
+
+def calculate_enhanced_similarity(current_image, reference_image):
+    """
+    Enhanced algorithm to calculate similarity between current plate and reference plate,
+    better suited for food waste analysis with multiple analysis methods combined.
+    
+    Args:
+        current_image: PIL Image of the current plate
+        reference_image: PIL Image of the reference (full) plate
+        
+    Returns:
+        float: Consumption ratio (0 to 1) where higher means more food consumed
+    """
+    
+    # Resize images to the same dimensions
+    size = (224, 224)  # Standard size for many vision models
+    current_resized = current_image.resize(size)
+    reference_resized = reference_image.resize(size)
+    
+    # Convert to RGB if not already
+    current_rgb = current_resized.convert('RGB')
+    reference_rgb = reference_resized.convert('RGB')
+    
+    # Convert to numpy arrays
+    current_array = np.array(current_rgb)
+    reference_array = np.array(reference_rgb)
+    
+    # Convert to grayscale for certain comparisons
+    current_gray = cv2.cvtColor(current_array, cv2.COLOR_RGB2GRAY)
+    reference_gray = cv2.cvtColor(reference_array, cv2.COLOR_RGB2GRAY)
+    
+    # 1. Calculate histogram similarity (better for food images)
+    hist_similarity = 0
+    for channel in range(3):  # RGB channels
+        hist1, _ = np.histogram(current_array[:,:,channel].flatten(), bins=64, range=(0, 256), density=True)
+        hist2, _ = np.histogram(reference_array[:,:,channel].flatten(), bins=64, range=(0, 256), density=True)
+        
+        # Calculate histogram intersection
+        channel_similarity = np.sum(np.minimum(hist1, hist2))
+        hist_similarity += channel_similarity / 3.0
+    
+    # 2. Calculate structural similarity (SSIM)
+    ssim_score = ssim(current_gray, reference_gray)
+    
+    # 3. Calculate mean squared error
+    mse = np.mean((current_gray - reference_gray) ** 2)
+    # Normalize MSE to 0-1 range (inverted so higher means more similar)
+    max_possible_mse = 255 ** 2
+    normalized_mse = 1 - (mse / max_possible_mse)
+    
+    # 4. Calculate brightness difference (empty plates are often brighter)
+    current_brightness = np.mean(current_array)
+    reference_brightness = np.mean(reference_array)
+    brightness_diff = 1 - (abs(current_brightness - reference_brightness) / 255.0)
+    
+    # 5. Calculate food area detection (assume food is non-white/non-background)
+    # Simple thresholding to detect food
+    bg_threshold = 230
+    current_food_mask = current_gray < bg_threshold
+    reference_food_mask = reference_gray < bg_threshold
+    
+    # Calculate food area ratios
+    current_food_ratio = np.sum(current_food_mask) / current_food_mask.size
+    reference_food_ratio = np.sum(reference_food_mask) / reference_food_mask.size
+    
+    # Calculate food area difference - how much food area has changed
+    if reference_food_ratio > 0:
+        food_area_ratio = current_food_ratio / reference_food_ratio
+    else:
+        food_area_ratio = 1.0  # Fallback if reference has no detected food
+    
+    # Clamp food area ratio to avoid unrealistic values
+    food_area_ratio = max(0.1, min(1.0, food_area_ratio))
+    
+    # 6. Combine features with appropriate weighting
+    # Adjust these weights based on testing with real food images
+    weights = {
+        'hist_similarity': 0.3,
+        'ssim': 0.2,
+        'mse': 0.15,
+        'brightness': 0.15,
+        'food_area': 0.2
+    }
+    
+    # Calculate weighted features
+    # For food waste, we want: low value = high consumption (high waste)
+    # Invert some metrics so that lower values indicate more consumption
+    feature_values = {
+        'hist_similarity': 1.0 - hist_similarity,  # Invert
+        'ssim': 1.0 - ssim_score,  # Invert
+        'mse': 1.0 - normalized_mse,  # Invert
+        'brightness': brightness_diff if current_brightness > reference_brightness else 0,  # Brighter = less food
+        'food_area': 1.0 - food_area_ratio  # Invert
+    }
+    
+    # Calculate final consumption ratio
+    consumption_ratio = sum(weights[feature] * feature_values[feature] for feature in weights)
+    
+    # Apply non-linear transformation to better spread values
+    consumption_ratio = consumption_ratio ** 0.8
+    
+    # Ensure result is in 0.1-0.9 range to avoid extreme estimates
+    consumption_ratio = max(0.1, min(0.9, consumption_ratio))
+    
+    # Create debug info dictionary (useful for testing)
+    debug_info = {
+        'hist_similarity': hist_similarity,
+        'ssim_score': ssim_score,
+        'normalized_mse': normalized_mse,
+        'brightness_diff': brightness_diff,
+        'food_area_ratio': food_area_ratio,
+        'weighted_consumption': consumption_ratio
+    }
+    
+    return consumption_ratio, debug_info
 
 def calculate_better_similarity(current_image, reference_image):
     """
@@ -380,7 +498,7 @@ def analyze_dish():
         print(f"Reference image loaded successfully")
         
         # Use our improved similarity calculation method
-        consumption_ratio = calculate_better_similarity(current_image, reference_image)
+        consumption_ratio, debug_info = calculate_enhanced_similarity(current_image, reference_image)
         print(f"Calculated consumption ratio: {consumption_ratio}")
         
         consumed_weight = dish_data['full_weight'] * consumption_ratio
@@ -397,7 +515,8 @@ def analyze_dish():
             "wasted": float(wasted_weight),
             "consumed_percent": float(consumed_weight/dish_data['full_weight']*100),
             "wasted_percent": float(wasted_weight/dish_data['full_weight']*100),
-            "timestamp": current_date
+            "timestamp": current_date,
+            "debug_info": debug_info  # Optional: include debug info
         }
         
         print(f"Analysis successful: {result}")
